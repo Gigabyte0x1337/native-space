@@ -1,0 +1,10 @@
+# Dynamics witness: a shared ORIENT commutes with an affine native step.
+let gain = scalar(3/2, -1/2)
+let state = index(1, scalar(2, 1))
+let control = index(2, scalar(-1, 3))
+let rotated_step = orient(1, add(multiply(gain, state), control))
+let step_of_rotated_state = add(
+    multiply(gain, orient(1, state)),
+    orient(1, control)
+)
+add(rotated_step, orient(2, step_of_rotated_state)) = 0

@@ -1,0 +1,7 @@
+# Fluid-mode witness: native interaction composition is associative.
+let mode_a = index(1, scalar(2, 1))
+let mode_b = index(2, scalar(-1, 3))
+let mode_c = index(3, scalar(1/2, -2))
+let left = multiply(mode_a, multiply(mode_b, mode_c))
+let right = multiply(multiply(mode_a, mode_b), mode_c)
+add(left, orient(2, right)) = 0

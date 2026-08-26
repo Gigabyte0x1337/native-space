@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+import "cycle-a.ns"
+
+let cycle_b = () =>
+MULTIPLY()

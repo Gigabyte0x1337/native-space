@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Classical multiplicative identity e = (1,0).
+let identity_x = one
+let identity_y = zero
+let half = scalar(1/2, 0)
+let negative_half = scalar(-1/2, 0)
+
+# Zeta's +45-degree projector applied to e.
+let zeta_x = add(multiply(half, identity_x), multiply(half, identity_y))
+let zeta_y = add(multiply(half, identity_x), multiply(half, identity_y))
+
+# RE's perpendicular -45-degree projector applied to e.
+let re_x = add(multiply(half, identity_x), multiply(negative_half, identity_y))
+let re_y = add(multiply(negative_half, identity_x), multiply(half, identity_y))
+
+# Derive each quadratic camera position from the projected identity.
+let zeta_position = add(multiply(identity_x, zeta_x), multiply(identity_y, zeta_y))
+let re_position = add(multiply(identity_x, re_x), multiply(identity_y, re_y))
+
+# Put RE in the opposite comparison orientation and ADD the positions.
+let opposite_re_position = orient(2, re_position)
+let perspective_position_residual = add(zeta_position, opposite_re_position)
+
+perspective_position_residual = zero

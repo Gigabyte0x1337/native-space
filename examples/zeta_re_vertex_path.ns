@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Two consecutive symbolic vertices of one indexed native path.
+let vertex_1_x = index(100, one)
+let vertex_1_y = index(101, one)
+let vertex_2_x = index(102, one)
+let vertex_2_y = index(103, one)
+
+let half = scalar(1/2, 0)
+let negative_half = scalar(-1/2, 0)
+
+# Zeta's +45-degree perspective is applied to each vertex separately.
+let zeta_1_x = add(multiply(half, vertex_1_x), multiply(half, vertex_1_y))
+let zeta_1_y = add(multiply(half, vertex_1_x), multiply(half, vertex_1_y))
+let zeta_2_x = add(multiply(half, vertex_2_x), multiply(half, vertex_2_y))
+let zeta_2_y = add(multiply(half, vertex_2_x), multiply(half, vertex_2_y))
+
+# RE's perpendicular perspective is applied to those same vertices.
+let re_1_x = add(multiply(half, vertex_1_x), multiply(negative_half, vertex_1_y))
+let re_1_y = add(multiply(negative_half, vertex_1_x), multiply(half, vertex_1_y))
+let re_2_x = add(multiply(half, vertex_2_x), multiply(negative_half, vertex_2_y))
+let re_2_y = add(multiply(negative_half, vertex_2_x), multiply(half, vertex_2_y))
+
+# Reconstruct every coordinate without removing or merging a path vertex.
+let reconstructed_1_x = add(zeta_1_x, re_1_x)
+let reconstructed_1_y = add(zeta_1_y, re_1_y)
+let reconstructed_2_x = add(zeta_2_x, re_2_x)
+let reconstructed_2_y = add(zeta_2_y, re_2_y)
+
+# Outer INDEX labels are the ordered path vertices. Inner INDEX labels keep
+# the x and y coordinates separate inside each vertex.
+add(
+    index(1, index(1, reconstructed_1_x)),
+    index(1, index(2, reconstructed_1_y)),
+    index(2, index(1, reconstructed_2_x)),
+    index(2, index(2, reconstructed_2_y))
+) = add(
+    index(1, index(1, vertex_1_x)),
+    index(1, index(2, vertex_1_y)),
+    index(2, index(1, vertex_2_x)),
+    index(2, index(2, vertex_2_y))
+)

@@ -1,0 +1,169 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Native Space 1.0 mathematical examples.
+#
+# Function names are ordinary source data. The Rust expander knows none of
+# their mathematical meaning. Calls are fully erased to the four core
+# operations.
+
+import "../language/functions.ns"
+
+let prime_birth = () =>
+INDEX()
+
+let prime_power = () =>
+INDEX()
+
+# pi denotes the prime-counting camera pi(n), not the circle constant.
+let pi = () =>
+INDEX()
+ADD()
+
+let birth_orient = () =>
+ORIENT("k mod 4")
+
+let classic_p = () =>
+ORIENT(0)
+
+# The classical source number line has one coordinate. A later camera may
+# zero-fill absent coordinates, but they are not additional source axes.
+let classical_source_axis = () =>
+classic_p()
+
+let classic_i = () =>
+ORIENT(1)
+
+# Half of the multiplicative identity is the unique center of
+# the reflection sigma -> 1 - sigma.
+let exact_half = () =>
+ADD()
+MULTIPLY()
+
+let centered_re_perspective = () =>
+axis_subtract(classic_p, exact_half)
+
+let p_minus_i = () =>
+ORIENT(3)
+
+let p_i = () =>
+ORIENT(1)
+
+let p_one = () =>
+ORIENT(0)
+
+let p_minus_one = () =>
+ORIENT(2)
+
+let classical_four_projection = () =>
+apply(p_minus_i, p_i, p_one, p_minus_one)
+
+let four_axis_cancellation = () =>
+classical_four_projection()
+ADD()
+ADD()
+
+let opposite_birth_pair = () =>
+birth_orient()
+ORIENT(2)
+MULTIPLY()
+ADD()
+
+let geometric_series = () =>
+INDEX()
+MULTIPLY()
+ADD()
+
+let binomial_expand = () =>
+ADD()
+MULTIPLY()
+INDEX()
+
+let finite_fourier = () =>
+exp_angle_flow()
+INDEX()
+MULTIPLY()
+ADD()
+
+let native_derivative_rules = () =>
+ADD()
+MULTIPLY()
+ORIENT("symbolic derivative turn")
+INDEX()
+
+let exp_angle_flow = () =>
+ADD()
+MULTIPLY()
+
+let classic_operator_demo = () =>
+apply(geometric_series, binomial_expand, finite_fourier, native_derivative_rules, exp_angle_flow)
+
+let classical_model = () =>
+ADD()
+MULTIPLY()
+ORIENT("symbolic model turn")
+INDEX()
+
+let zeta_pattern = () =>
+INDEX()
+ADD()
+MULTIPLY()
+
+let prime_log_character = () =>
+MULTIPLY()
+
+let weighted_flat_stack = () =>
+MULTIPLY()
+INDEX()
+
+let aggregate = () =>
+ADD()
+
+let zeta_projection = () =>
+zeta_pattern()
+prime_log_character()
+weighted_flat_stack()
+aggregate()
+
+let zeta_pair_camera = () =>
+zeta_pattern()
+prime_log_character()
+INDEX()
+ORIENT("even observation half-turn")
+ADD()
+
+let euler_product = () =>
+ADD()
+MULTIPLY()
+
+let prime_axis = () =>
+prime_log_character()
+
+let reflected_prime_axis = () =>
+prime_log_character()
+
+let dual_prime_alignment = () =>
+axis_subtract(prime_axis, reflected_prime_axis)
+
+let centered_re_pattern = () =>
+centered_re_perspective()
+dual_prime_alignment()
+
+let zeta_strip_coordinate = () =>
+zeta_pair_camera()
+MULTIPLY()
+
+let classical_perspective = (value) =>
+zero_fill_axes(classic_p, classic_i, value)
+
+let zeta_classical_pattern = () =>
+classical_perspective(zeta_strip_coordinate)
+
+let re_classical_pattern = () =>
+classical_perspective(centered_re_pattern)
+
+let prime_pattern = () =>
+prime_birth()
+birth_orient()
+MULTIPLY()
+
+let remove_prime_log_phase = () =>
+MULTIPLY()

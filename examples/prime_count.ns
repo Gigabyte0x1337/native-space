@@ -1,0 +1,5 @@
+# Prime counting has no privileged runtime command or Rust implementation.
+import "math-functions.ns"
+
+let prime_count_example = () =>
+pi()

@@ -1,0 +1,4 @@
+# One finite source describes the same quarter-turn observation again.
+let quarter_turn_pattern = () =>
+ORIENT(1)
+quarter_turn_pattern()

@@ -1,0 +1,6 @@
+# N-body witness: a zero center contribution stays zero after perspective change.
+let body_a = scalar(2, 1)
+let body_b = scalar(-3, 2)
+let body_c = scalar(1, -3)
+let center = add(body_a, body_b, body_c)
+orient(1, center) = 0

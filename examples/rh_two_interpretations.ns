@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Native Space RH interpretation, case one:
+# zero means the shared native origin reached on two different axes.
+# Zeta uses the +45-degree camera of the multiplicative identity.
+# RE uses the perpendicular -45-degree camera.
+let identity_x = one
+let identity_y = zero
+let half = scalar(1/2, 0)
+let negative_half = scalar(-1/2, 0)
+
+let zeta_x = add(multiply(half, identity_x), multiply(half, identity_y))
+let zeta_y = add(multiply(half, identity_x), multiply(half, identity_y))
+let re_x = add(multiply(half, identity_x), multiply(negative_half, identity_y))
+let re_y = add(multiply(negative_half, identity_x), multiply(half, identity_y))
+
+let zeta_position = add(multiply(identity_x, zeta_x), multiply(identity_y, zeta_y))
+let re_position = add(multiply(identity_x, re_x), multiply(identity_y, re_y))
+
+# Reverse RE's comparison orientation. The two camera positions then cancel
+# at their shared native origin. This is the project's proved RH reading.
+let rh_shared_origin_residual = add(zeta_position, orient(2, re_position))
+
+# Native Space RH interpretation, case two:
+# zero means that both cameras have the same complete zero fiber.
+# Start with an additive cancellation and then change the orientation of each
+# contribution separately. The aggregate was zero, but the changed strands
+# produce two. Therefore sharing an origin does not make the fibers equal.
+let additive_positive = one
+let additive_negative = orient(2, one)
+let additive_zero = add(additive_positive, additive_negative)
+let strandwise_changed = add(additive_positive, orient(2, additive_negative))
+let expected_two = scalar(2, 0)
+
+let rh_same_zero_fiber_false_residual = add(
+    index(1, additive_zero),
+    index(2, add(strandwise_changed, orient(2, expected_two)))
+)
+
+# Run both cases as one exact proof. INDEX keeps their residuals independent;
+# the complete proof succeeds only when both cases reduce to native zero.
+add(
+    index(10, rh_shared_origin_residual),
+    index(20, rh_same_zero_fiber_false_residual)
+) = zero

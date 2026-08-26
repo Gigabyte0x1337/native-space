@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# One symbolic vertex on the one-dimensional classical source axis.
+let classical_x = index(100, one)
+# This is camera zero-fill for an absent source coordinate, not a second
+# classical-axis input constrained by an assumption.
+let classical_y = zero
+let half = scalar(1/2, 0)
+let negative_half = scalar(-1/2, 0)
+
+# Zeta's +45-degree perspective.
+let zeta_x = add(multiply(half, classical_x), multiply(half, classical_y))
+let zeta_y = add(multiply(half, classical_x), multiply(half, classical_y))
+
+# RE's perpendicular perspective.
+let re_x = add(multiply(half, classical_x), multiply(negative_half, classical_y))
+let re_y = add(multiply(negative_half, classical_x), multiply(half, classical_y))
+
+# Rotate the zeta result clockwise by 90 degrees: (x, y) -> (y, -x).
+let rotated_zeta_x = zeta_y
+let rotated_zeta_y = orient(2, zeta_x)
+
+# The rotated zeta view is exactly the RE view on the classical axis.
+add(
+    index(1, rotated_zeta_x),
+    index(2, rotated_zeta_y)
+) = add(
+    index(1, re_x),
+    index(2, re_y)
+)

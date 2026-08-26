@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+parameter a: bool
+parameter b: bool
+prove iff(not(and(a, b)), or(not(a), not(b))) by truth_table

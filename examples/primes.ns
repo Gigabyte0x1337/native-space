@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Observe the one prime pattern at k = 3. The 3 is identity 2 is depth.
+let third_prime_squared = index(3, index(3, one))
+
+# Wrapped birth orientation is a separate coefficient state.
+let third_prime_orientation = orient(3, one)
+
+# One observation of the generative pattern combines identity and orientation.
+let third_pattern_observation = orient(3, index(3, one))
+
+output add(
+    third_prime_squared,
+    third_prime_orientation,
+    third_pattern_observation
+)

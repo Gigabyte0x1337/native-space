@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Two symbolic coordinates of one native state.
+let state_x = index(100, one)
+let state_y = index(101, one)
+let half = scalar(1/2, 0)
+let negative_half = scalar(-1/2, 0)
+
+# Wrap the state in zeta's +45-degree perspective.
+let zeta_x = add(multiply(half, state_x), multiply(half, state_y))
+let zeta_y = add(multiply(half, state_x), multiply(half, state_y))
+
+# Wrap the same state in RE's perpendicular perspective.
+let re_x = add(multiply(half, state_x), multiply(negative_half, state_y))
+let re_y = add(multiply(negative_half, state_x), multiply(half, state_y))
+
+# The two wrapped coordinates reconstruct the original state.
+let reconstructed_x = add(zeta_x, re_x)
+let reconstructed_y = add(zeta_y, re_y)
+
+# Their quadratic measurements reconstruct the original squared size.
+let zeta_size = add(multiply(state_x, zeta_x), multiply(state_y, zeta_y))
+let re_size = add(multiply(state_x, re_x), multiply(state_y, re_y))
+let original_size = add(multiply(state_x, state_x), multiply(state_y, state_y))
+
+add(
+    index(1, reconstructed_x),
+    index(2, reconstructed_y),
+    index(3, add(zeta_size, re_size))
+) = add(
+    index(1, state_x),
+    index(2, state_y),
+    index(3, original_size)
+)

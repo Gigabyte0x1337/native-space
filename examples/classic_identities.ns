@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Finite geometric identity: (1-x)(1+x+x^2+x^3) = 1-x^4.
+let minus_one = scalar(-1, 0)
+let x = index(1, one)
+let x2 = multiply(x, x)
+let x3 = multiply(x2, x)
+let x4 = multiply(x3, x)
+let geometric_sum = add(one, x, x2, x3)
+let geometric_left = multiply(add(one, multiply(minus_one, x)), geometric_sum)
+let geometric_right = add(one, multiply(minus_one, x4))
+let geometric_residual = add(
+  geometric_left,
+  multiply(minus_one, geometric_right)
+)
+
+# Binomial identity: (a+b)^2 = a^2 + 2ab + b^2.
+let a = index(2, one)
+let b = index(3, one)
+let binomial_left = multiply(add(a, b), add(a, b))
+let binomial_right = add(
+  multiply(a, a),
+  multiply(scalar(2, 0), a, b),
+  multiply(b, b)
+)
+let binomial_residual = add(
+  binomial_left,
+  multiply(minus_one, binomial_right)
+)
+
+# Native four-orientation identity: 1 + J - 1 - J = 0.
+let orientation_residual = add(
+  one,
+  orient(1, one),
+  orient(2, one),
+  orient(3, one)
+)
+
+# Distinct tags prevent one failed identity from cancelling another.
+output add(
+  index(10, geometric_residual),
+  index(11, binomial_residual),
+  index(12, orientation_residual)
+)

@@ -1,0 +1,15 @@
+# One aggregate cancels exactly.
+let positive = one
+let negative = orient(2, one)
+let aggregate = add(positive, negative)
+
+# A different turn on each contribution changes that zero aggregate into two.
+let strandwise_changed = add(positive, orient(2, negative))
+let expected_two = scalar(2, 0)
+
+# The first tagged residual proves aggregate = zero.
+# The second proves strandwise_changed = two, not zero.
+add(
+    index(100, aggregate),
+    index(101, add(strandwise_changed, orient(2, expected_two)))
+) = 0

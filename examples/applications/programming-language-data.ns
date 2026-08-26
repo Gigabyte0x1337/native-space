@@ -1,0 +1,15 @@
+# Programming-language witness: source strings and tagged AST fields are exact.
+let keyword = "let"
+let identifier = "answer"
+let value = scalar(42, 0)
+let source_node = add(
+    index(1001, keyword),
+    index(1002, identifier),
+    index(1003, value)
+)
+let reconstructed = add(
+    index(1003, value),
+    index(1001, "l\u0065t"),
+    index(1002, "answer")
+)
+add(source_node, orient(2, reconstructed)) = 0

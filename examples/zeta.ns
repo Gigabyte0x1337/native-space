@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Domain names are ordinary source-defined functions. Rust does not assign
+# types or mathematics to any of them.
+# Zeta stays centered at the ADD identity zero. The 1/2 reflection center
+# belongs to the separate RE input coordinate, not to this zeta value.
+
+import "math-functions.ns"
+
+let zeta_example = () =>
+zeta_pattern()
+prime_log_character()
+weighted_flat_stack()
+aggregate()

@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Classical multiplicative identity e = (1,0).
+let identity_x = one
+let identity_y = zero
+let half = scalar(1/2, 0)
+let negative_half = scalar(-1/2, 0)
+
+# Zeta's +45-degree projector applied to e.
+let zeta_x = add(multiply(half, identity_x), multiply(half, identity_y))
+let zeta_y = add(multiply(half, identity_x), multiply(half, identity_y))
+
+# RE's perpendicular projector applied to e.
+let re_x = add(multiply(half, identity_x), multiply(negative_half, identity_y))
+let re_y = add(multiply(negative_half, identity_x), multiply(half, identity_y))
+
+# Quadratic positions of the identity in the two perspectives.
+let zeta_position = add(multiply(identity_x, zeta_x), multiply(identity_y, zeta_y))
+let re_position = add(multiply(identity_x, re_x), multiply(identity_y, re_y))
+
+# Every tagged equality is checked independently.
+add(
+    index(1, zeta_x),
+    index(2, zeta_y),
+    index(3, re_x),
+    index(4, re_y),
+    index(5, zeta_position),
+    index(6, re_position),
+    index(7, add(zeta_position, re_position))
+) = add(
+    index(1, half),
+    index(2, half),
+    index(3, half),
+    index(4, negative_half),
+    index(5, half),
+    index(6, half),
+    index(7, one)
+)

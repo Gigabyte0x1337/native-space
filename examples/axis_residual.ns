@@ -1,0 +1,4 @@
+# Opposite signed coordinates in one perspective cancel automatically.
+# The real axis cancels: 3 + -3 = 0.
+# The imaginary axis leaves the only residual: 2 + -1 = 1.
+output add(scalar(3, 2), orient(2, scalar(3, 1))) as pattern

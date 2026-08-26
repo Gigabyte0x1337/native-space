@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Pure native four-orientation cancellation: 1 + J + (-1) + (-J) = 0.
+
+let native_one = one
+let native_j = orient(1, native_one)
+let native_minus_one = orient(2, native_one)
+let native_minus_j = orient(3, native_one)
+output add(native_one, native_j, native_minus_one, native_minus_j)

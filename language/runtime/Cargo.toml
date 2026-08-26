@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "native-space-language"
+description = "Native Space 1.0 language, runtime, proof checker, CLI, and MCP server"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.88"
+license = "AGPL-3.0-or-later"
+readme = "../../README.md"
+repository = "https://github.com/Gigabyte0x1337/native-space"
+publish = false
+
+[[bin]]
+name = "native-space"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.6.6", features = ["derive"] }
+mimalloc = "0.1.52"
+num-bigint = "0.4.6"
+num-rational = "0.4.2"
+num-traits = "0.2.19"
+rmcp = { version = "3.1.4", features = ["transport-io"] }
+schemars = "1.0.4"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.49.0", features = ["io-std", "macros", "rt-multi-thread", "signal"] }
+
+[lints.rust]
+ambiguous_negative_literals = "warn"
+missing_debug_implementations = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_lifetimes = "warn"
+
+[lints.clippy]
+cargo = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "warn"
+as_pointer_underscore = "warn"
+assertions_on_result_states = "warn"
+clone_on_ref_ptr = "warn"
+deref_by_slicing = "warn"
+disallowed_script_idents = "warn"
+empty_drop = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+fn_to_numeric_cast_any = "warn"
+if_then_some_else_none = "warn"
+map_err_ignore = "warn"
+redundant_type_annotations = "warn"
+renamed_function_params = "warn"
+semicolon_outside_block = "warn"
+string_to_string = "warn"
+undocumented_unsafe_blocks = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+unneeded_field_pattern = "warn"
+unused_result_ok = "warn"
+literal_string_with_formatting_args = "allow"
+# Current MCP and schema macro dependencies intentionally use different `syn`
+# major versions. This is build-time duplication and does not affect the binary
+# API or Native Space semantics.
+multiple_crate_versions = "allow"
+# This binary application is distributed through GitHub Releases rather than
+# crates.io, so crates.io-focused package metadata is intentionally incomplete.
+cargo_common_metadata = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

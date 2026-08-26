@@ -1,0 +1,5 @@
+# UTF-8 strings lower completely to ADD, INDEX, and ONE.
+# Literal Unicode and JSON-style Unicode escapes produce the same native state.
+let literal = "Native π λ"
+let escaped = "Native \u03c0 \u03bb"
+add(literal, orient(2, escaped)) = 0

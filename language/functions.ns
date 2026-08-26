@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Generic Native Space 1.0 functions. No mathematical camera or theorem has
+# privileged runtime behavior.
+
+let identity_orientation = () =>
+ORIENT(0)
+
+let apply = (functions...) =>
+functions()
+
+let axis_add = (left, right) =>
+left()
+right()
+ADD()
+
+let axis_subtract = (left, right) =>
+left()
+right()
+ORIENT(2)
+ADD()
+
+let zero_fill_axes = (parts...) =>
+parts()
+ADD()
+
+let native_perspective = (objects...) =>
+objects()
+ORIENT("inverse observer turn")

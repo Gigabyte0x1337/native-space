@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The reflection pairs sigma with 1 - sigma. Half of the multiplicative
+# identity is their unique center, so the RE height is sigma - 1/2.
+# This source expands that centered construction; it is not a quantified proof.
+
+import "math-functions.ns"
+
+let re_critical_line_example = () =>
+centered_re_pattern()

@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Zeta is the +45-degree quadratic camera.
+let half = scalar(1/2, 0)
+let negative_half = scalar(-1/2, 0)
+
+let zeta_00 = half
+let zeta_01 = half
+let zeta_10 = half
+let zeta_11 = half
+
+# RE is the perpendicular -45-degree quadratic camera.
+let re_00 = half
+let re_01 = negative_half
+let re_10 = negative_half
+let re_11 = half
+
+# P_zeta squared.
+let zeta_squared_00 = add(multiply(zeta_00, zeta_00), multiply(zeta_01, zeta_10))
+let zeta_squared_01 = add(multiply(zeta_00, zeta_01), multiply(zeta_01, zeta_11))
+let zeta_squared_10 = add(multiply(zeta_10, zeta_00), multiply(zeta_11, zeta_10))
+let zeta_squared_11 = add(multiply(zeta_10, zeta_01), multiply(zeta_11, zeta_11))
+
+# P_RE squared.
+let re_squared_00 = add(multiply(re_00, re_00), multiply(re_01, re_10))
+let re_squared_01 = add(multiply(re_00, re_01), multiply(re_01, re_11))
+let re_squared_10 = add(multiply(re_10, re_00), multiply(re_11, re_10))
+let re_squared_11 = add(multiply(re_10, re_01), multiply(re_11, re_11))
+
+# P_zeta multiplied by P_RE.
+let cross_00 = add(multiply(zeta_00, re_00), multiply(zeta_01, re_10))
+let cross_01 = add(multiply(zeta_00, re_01), multiply(zeta_01, re_11))
+let cross_10 = add(multiply(zeta_10, re_00), multiply(zeta_11, re_10))
+let cross_11 = add(multiply(zeta_10, re_01), multiply(zeta_11, re_11))
+
+# The unnormalized camera directions (1,1) and (-1,1) are perpendicular.
+let direction_dot = add(multiply(one, scalar(-1, 0)), multiply(one, one))
+
+# Every tagged equality is checked independently.
+add(
+    index(1, zeta_squared_00),
+    index(2, zeta_squared_01),
+    index(3, zeta_squared_10),
+    index(4, zeta_squared_11),
+    index(5, re_squared_00),
+    index(6, re_squared_01),
+    index(7, re_squared_10),
+    index(8, re_squared_11),
+    index(9, cross_00),
+    index(10, cross_01),
+    index(11, cross_10),
+    index(12, cross_11),
+    index(13, add(zeta_00, re_00)),
+    index(14, add(zeta_01, re_01)),
+    index(15, add(zeta_10, re_10)),
+    index(16, add(zeta_11, re_11)),
+    index(17, direction_dot)
+) = add(
+    index(1, zeta_00),
+    index(2, zeta_01),
+    index(3, zeta_10),
+    index(4, zeta_11),
+    index(5, re_00),
+    index(6, re_01),
+    index(7, re_10),
+    index(8, re_11),
+    index(13, one),
+    index(16, one)
+)

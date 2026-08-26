@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# These reflected axes agree at sigma = 1/2 because sigma = 1 - sigma there.
+# The one is the multiplicative identity in the reflection. This example shows
+# the axis subtraction only; re_critical_line.ns includes the centered height.
+
+import "math-functions.ns"
+
+let dual_alignment_example = () =>
+prime_axis()
+reflected_prime_axis()
+ORIENT(2)
+ADD()

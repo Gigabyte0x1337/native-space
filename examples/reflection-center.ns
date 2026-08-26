@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# The reflection uses the multiplicative identity one.
+let multiplicative_identity = one
+let half = scalar(1/2, 0)
+
+# Reflection of x is one minus x.
+let reflected_half = add(multiplicative_identity, orient(2, half))
+
+# Half is fixed by reflection.
+let fixed_center_residual = add(reflected_half, orient(2, half))
+
+# One exact observation on either side of half.
+let observation = scalar(3/4, 0)
+let reflected_observation = add(multiplicative_identity, orient(2, observation))
+let centered_observation = add(observation, orient(2, half))
+let centered_reflection = add(reflected_observation, orient(2, half))
+
+# Centered reflection reverses orientation, so the two residuals cancel.
+let reflection_reversal_residual = add(centered_observation, centered_reflection)
+
+add(
+    index(1, fixed_center_residual),
+    index(2, reflection_reversal_residual)
+) = 0
