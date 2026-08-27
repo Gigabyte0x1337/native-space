@@ -85,6 +85,77 @@ It chooses which coordinates to show and which distinctions to forget.
 
 The flat stack is the default because it throws away the least information.
 
+## Operations and reversible shapes carry the same information
+
+Imagine bending a marked wire into a helix. If we retain the exact bending
+rule, we can straighten the wire and later bend it back. The visible shape
+changed, but neither the marks nor their order were lost. Native Space treats
+an exact change of coordinates in the same way.
+
+Let $E$ place a native state $x$ in a geometric camera:
+
+$$
+X=E(x).
+$$
+
+When $E$ is reversible, a native operation $F$ appears in that camera as the
+geometric transformation
+
+$$
+G=E\circ F\circ E^{-1}.
+$$
+
+This means that the operation and its geometric motion contain the same
+information. `ORIENT` may appear as a rotation, `INDEX` as movement along an
+axis, `ADD` as superposition, and `MULTIPLY` as scaling or mode mixing. These
+are coordinate descriptions of the operations, not extra primitives.
+
+Now change the complete geometric shape with another reversible transform
+$C$. Its new coordinates are
+
+$$
+X'=C(X),
+$$
+
+and the same operation in the new shape is
+
+$$
+G'=C\circ G\circ C^{-1}.
+$$
+
+The inverse proves that no information was lost:
+
+$$
+C^{-1}(C(X))=X.
+$$
+
+This is why one recursive object may be shown as a twisted helix, an
+untwisted line, a cone, a bounded box, a frequency pattern, or a coherent
+optical field. If every coordinate change has an exact inverse, changing the
+shape changes how the program looks—not what the program is.
+
+Not every camera is reversible. A projection, clipping operation, rounding
+step, zero scaling, or intensity-only measurement may merge distinct native
+states. Such a camera becomes reconstructible only when the removed
+information is retained in an old copy or complementary channel. In that
+case the reconstruction has the form
+
+$$
+X=D(P_1(X),P_2(X),\ldots).
+$$
+
+The important rule is therefore:
+
+> Any reversible deformation may be used freely. A lossy camera may be used
+> only with an explicit statement of what it forgets and, when reversal is
+> required, the information that reconstructs it.
+
+Three-dimensional geometry is an important camera because rotations,
+strands, cones, and projections become visible there. It is not the whole
+native algebra. The underlying `ADD × MULTIPLY × ORIENT × INDEX` state remains
+primary, and one or more 3D cameras may display it without claiming that every
+native coordinate is literally a physical spatial dimension.
+
 ## Multiplication already contains direction
 
 The familiar complex plane adds a direction called `i`:
