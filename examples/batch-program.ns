@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# One step stays sequential for each point; the CLI distributes the points.
+
+let step = (value) => add(multiply(value, 2), 1)
+
+output 0

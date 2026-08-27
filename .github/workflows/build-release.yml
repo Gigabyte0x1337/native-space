@@ -62,11 +62,14 @@ jobs:
       - name: Run the complete test suite
         run: cargo test --manifest-path language/runtime/Cargo.toml --locked
 
+      - name: Run the GPU-feature test suite
+        run: cargo test --manifest-path language/runtime/Cargo.toml --locked --all-features
+
       - name: Run strict lint checks
         run: cargo clippy --manifest-path language/runtime/Cargo.toml --locked --all-targets --all-features -- -D warnings
 
       - name: Build the release binary
-        run: cargo build --manifest-path language/runtime/Cargo.toml --locked --release --bin native-space
+        run: cargo build --manifest-path language/runtime/Cargo.toml --locked --features gpu --release --bin native-space
 
       - name: Create the release archive
         shell: bash

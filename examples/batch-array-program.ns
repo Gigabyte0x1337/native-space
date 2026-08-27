@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Every rectangular array is already one indexed native state.
+
+let step = (array) => array
+
+output 0

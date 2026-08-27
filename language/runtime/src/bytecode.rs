@@ -99,8 +99,10 @@ impl BytecodeProgram {
 ///
 /// Returns a name-analysis diagnostic or a slot-capacity error.
 pub fn compile(program: &Program) -> Result<BytecodeProgram, LanguageError> {
-    let optimized = optimize(program)?;
-    let program = expand_functions(&optimized.program)?;
+    // Reflection must observe the original source graph. Lower calls and trace
+    // strands before theorem-authorized rewrites optimize the executable form.
+    let expanded = expand_functions(program)?;
+    let program = optimize(&expanded)?.program;
     let mut compiler = Compiler::default();
     for binding in &program.bindings {
         compiler.expression(&binding.value);
@@ -162,6 +164,12 @@ impl Compiler {
                 *span,
             ),
             Expr::Call { .. } => unreachable!("calls are erased before bytecode generation"),
+            Expr::Trace { .. } => {
+                unreachable!("trace is lowered before bytecode generation")
+            }
+            Expr::Untrace { .. } => {
+                unreachable!("untrace is lowered before bytecode generation")
+            }
             Expr::Add { operands, span } | Expr::Multiply { operands, span } => {
                 for operand in operands {
                     self.expression(operand);

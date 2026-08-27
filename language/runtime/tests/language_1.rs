@@ -19,7 +19,7 @@ fn document(name: &str) -> Document {
 }
 
 #[test]
-fn every_example_uses_the_single_ns_format_and_parses() {
+fn every_example_is_source_or_valid_host_data() {
     fn check(directory: &Path) {
         for entry in fs::read_dir(directory).unwrap() {
             let path = entry.unwrap().path();
@@ -27,13 +27,24 @@ fn every_example_uses_the_single_ns_format_and_parses() {
                 check(&path);
                 continue;
             }
-            assert_eq!(
-                path.extension().and_then(|value| value.to_str()),
-                Some("ns"),
-                "unexpected example format: {}",
-                path.display()
-            );
-            load_document(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            match path.extension().and_then(|value| value.to_str()) {
+                Some("ns") => {
+                    load_document(&path)
+                        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                }
+                Some("json") => {
+                    native_space_language::batch::read_data(&path)
+                        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                }
+                Some("csv") => {
+                    native_space_language::continuation::read_observations_csv(&path)
+                        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                }
+                extension => panic!(
+                    "unexpected example format {extension:?}: {}",
+                    path.display()
+                ),
+            }
         }
     }
     check(&repository().join("examples"));
@@ -149,6 +160,9 @@ fn finite_examples_agree_between_evaluator_and_vm() {
         "operators.ns",
         "orientation_zero.ns",
         "primes.ns",
+        "trace.ns",
+        "untrace-with-errors.ns",
+        "untrace.ns",
         "utf8.ns",
     ] {
         let Document::State(program) = document(name) else {
@@ -163,6 +177,18 @@ fn finite_examples_agree_between_evaluator_and_vm() {
         );
         assert_eq!(bytecode.version, 1);
         assert_eq!(bytecode.output_kind, program.output_kind);
+    }
+}
+
+#[test]
+fn untrace_error_ratio_is_an_exact_number_from_zero_through_one() {
+    for invalid in ["-1", "3/2"] {
+        let source =
+            format!("output untrace(add(index(1, 1), index(2, 1), index(3, 1)), {invalid})");
+        let error = parse_document(&source, "invalid-budget.ns").unwrap_err();
+
+        assert_eq!(error.0.code, "NSP051", "{invalid}");
+        assert!(error.0.span.is_some(), "{invalid}");
     }
 }
 

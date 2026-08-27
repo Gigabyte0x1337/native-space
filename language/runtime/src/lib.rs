@@ -7,11 +7,16 @@
 //! functions, and finite Boolean proofs. Mathematical names and theorem IDs
 //! are source data; Rust assigns them no privileged semantics.
 
+pub mod batch;
 pub mod bytecode;
+pub mod continuation;
 pub mod core;
 pub mod derivation;
 pub mod expansion;
+pub mod frequency;
+pub mod gpu;
 pub mod logic;
+pub mod strand;
 
 pub const LANGUAGE_VERSION: &str = "1.0";
 

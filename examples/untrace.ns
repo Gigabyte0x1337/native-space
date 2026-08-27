@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# untrace learns from a prefix, checks held-out indexes, and returns a strand.
+
+let fibonacci_observations = () =>
+add(
+  index(1, 1),
+  index(2, 1),
+  index(3, 2),
+  index(4, 3),
+  index(5, 5),
+  index(6, 8),
+  index(7, 13)
+)
+
+# Finds next = previous_1 + previous_2 and predicts index 8 as 21.
+output untrace(fibonacci_observations()) as pattern

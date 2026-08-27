@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Raw indexed observations accepted by the `native-space untrace` command.
+
+let fibonacci_observations = () =>
+add(
+  index(1, 1),
+  index(2, 1),
+  index(3, 2),
+  index(4, 3),
+  index(5, 5),
+  index(6, 8),
+  index(7, 13)
+)
+
+output fibonacci_observations() as pattern

@@ -9,7 +9,7 @@ use std::str::FromStr;
 
 use num_bigint::{BigInt, BigUint};
 use num_rational::BigRational;
-use num_traits::{One as _, Zero as _};
+use num_traits::{One as _, ToPrimitive as _, Zero as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -459,6 +459,15 @@ pub enum Expr {
         arguments: Vec<Expr>,
         span: Option<Span>,
     },
+    Trace {
+        function: String,
+        span: Option<Span>,
+    },
+    Untrace {
+        value: Box<Expr>,
+        maximum_error_ratio: String,
+        span: Option<Span>,
+    },
     Add {
         operands: Vec<Expr>,
         span: Option<Span>,
@@ -489,6 +498,8 @@ impl Expr {
             | Self::Scalar { span, .. }
             | Self::Reference { span, .. }
             | Self::Call { span, .. }
+            | Self::Trace { span, .. }
+            | Self::Untrace { span, .. }
             | Self::Add { span, .. }
             | Self::Multiply { span, .. }
             | Self::Orient { span, .. }
@@ -589,6 +600,8 @@ pub(crate) const LANGUAGE_NAMESPACE: &[(&str, LanguageNameKind)] = &[
     ("MULTIPLY", LanguageNameKind::CoreOperation),
     ("ORIENT", LanguageNameKind::CoreOperation),
     ("INDEX", LanguageNameKind::CoreOperation),
+    ("trace", LanguageNameKind::ExactGrammar),
+    ("untrace", LanguageNameKind::ExactGrammar),
     ("zero", LanguageNameKind::ExactGrammar),
     ("one", LanguageNameKind::ExactGrammar),
     ("scalar", LanguageNameKind::ExactGrammar),
@@ -1325,6 +1338,46 @@ impl Parser {
                     span: Some(start.span.join(end.span)),
                 })
             }
+            "trace" => {
+                self.expect(TokenKind::LParen, "NSP046", "expected '(' after 'trace'")?;
+                let function = self.expect(
+                    TokenKind::Ident,
+                    "NSP047",
+                    "trace expects a source function name",
+                )?;
+                let end = self.expect(
+                    TokenKind::RParen,
+                    "NSP048",
+                    "expected ')' after trace target",
+                )?;
+                Ok(Expr::Trace {
+                    function: function.text,
+                    span: Some(start.span.join(end.span)),
+                })
+            }
+            "untrace" => {
+                self.expect(TokenKind::LParen, "NSP049", "expected '(' after 'untrace'")?;
+                let value = Box::new(self.expression()?);
+                let maximum_error_ratio = if self.current().kind == TokenKind::Comma {
+                    self.advance();
+                    self.error_ratio(
+                        "NSP051",
+                        "untrace maximum error ratio must be an exact number from 0 through 1",
+                    )?
+                } else {
+                    "0".into()
+                };
+                let end = self.expect(
+                    TokenKind::RParen,
+                    "NSP050",
+                    "expected ')' after untrace arguments",
+                )?;
+                Ok(Expr::Untrace {
+                    value,
+                    maximum_error_ratio,
+                    span: Some(start.span.join(end.span)),
+                })
+            }
             "let" | "output" => Err(fail(
                 "NSP009",
                 format!("reserved word {:?} is not an expression", start.text),
@@ -1395,6 +1448,16 @@ impl Parser {
         u64::try_from(value).map_err(|_conversion_error| {
             fail(code, message, &self.source_name, Some(self.current().span))
         })
+    }
+
+    fn error_ratio(&mut self, code: &str, message: &str) -> Result<String, LanguageError> {
+        let token = self.expect(TokenKind::Number, code, message)?;
+        let value = rational(&token.text)
+            .map_err(|_parse_error| fail(code, message, &self.source_name, Some(token.span)))?;
+        if value < BigRational::zero() || value > BigRational::one() {
+            return Err(fail(code, message, &self.source_name, Some(token.span)));
+        }
+        Ok(token.text)
     }
 }
 
@@ -1732,10 +1795,23 @@ fn analyze_expr(
                 .iter()
                 .for_each(|item| analyze_expr(item, names, functions, source, out));
         }
+        Expr::Trace { function, span } => {
+            if !functions.contains_key(function) {
+                out.push(
+                    fail(
+                        "NSS003",
+                        format!("unknown function {function:?}"),
+                        source,
+                        *span,
+                    )
+                    .0,
+                );
+            }
+        }
         Expr::Add { operands, .. } | Expr::Multiply { operands, .. } => operands
             .iter()
             .for_each(|item| analyze_expr(item, names, functions, source, out)),
-        Expr::Orient { value, .. } | Expr::Index { value, .. } => {
+        Expr::Orient { value, .. } | Expr::Index { value, .. } | Expr::Untrace { value, .. } => {
             analyze_expr(value, names, functions, source, out);
         }
         _ => {}
@@ -1757,10 +1833,14 @@ fn expression_calls<'a>(expr: &'a Expr, calls: &mut Vec<(&'a str, Option<Span>)>
         Expr::Add { operands, .. } | Expr::Multiply { operands, .. } => operands
             .iter()
             .for_each(|operand| expression_calls(operand, calls)),
-        Expr::Orient { value, .. } | Expr::Index { value, .. } => {
+        Expr::Orient { value, .. } | Expr::Index { value, .. } | Expr::Untrace { value, .. } => {
             expression_calls(value, calls);
         }
-        Expr::Zero { .. } | Expr::One { .. } | Expr::Scalar { .. } | Expr::Reference { .. } => {}
+        Expr::Zero { .. }
+        | Expr::One { .. }
+        | Expr::Scalar { .. }
+        | Expr::Reference { .. }
+        | Expr::Trace { .. } => {}
     }
 }
 
@@ -1803,11 +1883,20 @@ fn find_function_cycle<'a>(
     None
 }
 
-fn function_cycle(functions: &BTreeMap<String, &Function>) -> Option<(Vec<String>, Option<Span>)> {
+fn executed_function_cycle(
+    program: &Program,
+    functions: &BTreeMap<String, &Function>,
+) -> Option<(Vec<String>, Option<Span>)> {
     let mut states = BTreeMap::new();
     let mut active = Vec::new();
-    for function in functions.keys() {
-        if states.get(function.as_str()).copied().unwrap_or_default() == 0
+    let mut roots = Vec::new();
+    for binding in &program.bindings {
+        expression_calls(&binding.value, &mut roots);
+    }
+    expression_calls(&program.result, &mut roots);
+    for (function, _) in roots {
+        if functions.contains_key(function)
+            && states.get(function).copied().unwrap_or_default() == 0
             && let Some(cycle) = find_function_cycle(function, functions, &mut states, &mut active)
         {
             return Some(cycle);
@@ -1860,7 +1949,7 @@ pub fn analyze(program: &Program) -> Vec<Diagnostic> {
             &mut out,
         );
     }
-    if let Some((cycle, span)) = function_cycle(&function_names) {
+    if let Some((cycle, span)) = executed_function_cycle(program, &function_names) {
         out.push(
             fail(
                 "NSS007",
@@ -1941,6 +2030,179 @@ pub fn interpret(program: &Program) -> Result<NativeState, LanguageError> {
         &program.source_name,
     )
 }
+
+/// A validated source-defined function callable with exact native states.
+///
+/// This is the host boundary for applying ordinary Native Space source logic
+/// to runtime data. It does not assign the function name privileged semantics
+/// and uses the same evaluator as a complete source document.
+#[derive(Debug)]
+pub struct ExactFunction<'a> {
+    definition: &'a Function,
+    functions: BTreeMap<String, &'a Function>,
+    source_name: &'a str,
+}
+
+impl ExactFunction<'_> {
+    /// Return the exact number of required arguments.
+    #[must_use]
+    pub fn parameter_count(&self) -> usize {
+        self.definition.parameters.len()
+    }
+
+    /// Apply the source-defined function to exact native-state arguments.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NSE002` for the wrong argument count or the first ordinary
+    /// language diagnostic raised while evaluating the function body.
+    pub fn apply(&self, arguments: &[NativeState]) -> Result<NativeState, LanguageError> {
+        if arguments.len() != self.definition.parameters.len() {
+            return Err(fail(
+                "NSE002",
+                format!(
+                    "function {:?} expects {} arguments, found {}",
+                    self.definition.name,
+                    self.definition.parameters.len(),
+                    arguments.len()
+                ),
+                self.source_name,
+                self.definition.span,
+            ));
+        }
+        let environment = self
+            .definition
+            .parameters
+            .iter()
+            .cloned()
+            .zip(arguments.iter().cloned())
+            .collect();
+        evaluate(
+            &self.definition.body,
+            &environment,
+            &self.functions,
+            &mut vec![self.definition.name.clone()],
+            self.source_name,
+        )
+    }
+}
+
+/// Select one source-defined function for repeated exact invocation.
+///
+/// # Errors
+///
+/// Returns `NSE001` when the function does not exist, or the first validation
+/// diagnostic from the source document.
+pub fn exact_function<'a>(
+    program: &'a Program,
+    name: &str,
+) -> Result<ExactFunction<'a>, LanguageError> {
+    validate(program)?;
+    let functions = program
+        .functions
+        .iter()
+        .map(|function| (function.name.clone(), function))
+        .collect::<BTreeMap<_, _>>();
+    let definition = functions.get(name).copied().ok_or_else(|| {
+        fail(
+            "NSE001",
+            format!("unknown exact function {name:?}"),
+            &program.source_name,
+            program.span,
+        )
+    })?;
+    Ok(ExactFunction {
+        definition,
+        functions,
+        source_name: &program.source_name,
+    })
+}
+
+pub(crate) struct UnaryFunction<'a> {
+    definition: &'a Function,
+    functions: BTreeMap<String, &'a Function>,
+    source_name: &'a str,
+}
+
+impl UnaryFunction<'_> {
+    pub(crate) fn apply(
+        &self,
+        mut value: NativeState,
+        steps: u64,
+    ) -> Result<NativeState, LanguageError> {
+        let parameter = &self.definition.parameters[0];
+        for _ in 0..steps {
+            let environment = BTreeMap::from([(parameter.clone(), value)]);
+            value = evaluate(
+                &self.definition.body,
+                &environment,
+                &self.functions,
+                &mut vec![self.definition.name.clone()],
+                self.source_name,
+            )?;
+        }
+        Ok(value)
+    }
+}
+
+pub(crate) fn unary_function<'a>(
+    program: &'a Program,
+    name: &str,
+) -> Result<UnaryFunction<'a>, LanguageError> {
+    validate(program)?;
+    let functions = program
+        .functions
+        .iter()
+        .map(|function| (function.name.clone(), function))
+        .collect::<BTreeMap<_, _>>();
+    let definition = functions.get(name).copied().ok_or_else(|| {
+        fail(
+            "NSB001",
+            format!("unknown batch function {name:?}"),
+            &program.source_name,
+            program.span,
+        )
+    })?;
+    if definition.parameters.len() != 1 {
+        return Err(fail(
+            "NSB002",
+            format!(
+                "batch function {name:?} must have exactly one parameter, found {}",
+                definition.parameters.len()
+            ),
+            &program.source_name,
+            definition.span,
+        ));
+    }
+    Ok(UnaryFunction {
+        definition,
+        functions,
+        source_name: &program.source_name,
+    })
+}
+
+#[cfg(feature = "gpu")]
+pub(crate) fn expanded_unary_expression(
+    program: &Program,
+    name: &str,
+) -> Result<Expr, LanguageError> {
+    let selected = unary_function(program, name)?;
+    let parameter = selected.definition.parameters[0].clone();
+    expand_expr(
+        &selected.definition.body,
+        &selected.functions,
+        &BTreeMap::from([(
+            parameter,
+            Expr::Reference {
+                name: "input".into(),
+                span: selected.definition.span,
+            },
+        )]),
+        &mut vec![selected.definition.name.clone()],
+        selected.source_name,
+    )
+}
+
 fn evaluate(
     expr: &Expr,
     env: &BTreeMap<String, NativeState>,
@@ -1995,6 +2257,25 @@ fn evaluate(
             let result = evaluate(&definition.body, &local, functions, active, source);
             active.pop();
             result
+        }
+        Expr::Trace { function, span } => {
+            let strand =
+                crate::strand::operation_strand(function, functions, source, source, *span)?;
+            evaluate(&strand, env, functions, active, source)
+        }
+        Expr::Untrace {
+            value,
+            maximum_error_ratio,
+            span,
+        } => {
+            let state = evaluate(value, env, functions, active, source)?;
+            if crate::strand::is_operation_strand(&state) {
+                return Ok(state);
+            }
+            let continuation =
+                crate::continuation::synthesize(&state, maximum_error_ratio, source, *span)?;
+            let strand = continuation.strand_expression(source, *span)?;
+            evaluate(&strand, env, functions, active, source)
         }
         Expr::Add { operands, .. } => {
             let mut out = NativeState::zero();
@@ -2055,7 +2336,7 @@ pub(crate) fn expand_functions(program: &Program) -> Result<Program, LanguageErr
         &mut Vec::new(),
         &program.source_name,
     )?;
-    Ok(Program {
+    let expanded = Program {
         functions: Vec::new(),
         bindings,
         goal: program.goal,
@@ -2063,7 +2344,8 @@ pub(crate) fn expand_functions(program: &Program) -> Result<Program, LanguageErr
         result,
         source_name: program.source_name.clone(),
         span: program.span,
-    })
+    };
+    lower_reflective_expressions(&expanded)
 }
 
 fn expand_expr(
@@ -2115,6 +2397,18 @@ fn expand_expr(
             active.pop();
             result
         }
+        Expr::Trace { function, span } => {
+            crate::strand::operation_strand(function, functions, source, source, *span)
+        }
+        Expr::Untrace {
+            value,
+            maximum_error_ratio,
+            span,
+        } => Ok(Expr::Untrace {
+            value: Box::new(expand_expr(value, functions, parameters, active, source)?),
+            maximum_error_ratio: maximum_error_ratio.clone(),
+            span: *span,
+        }),
         Expr::Add { operands, span } => Ok(Expr::Add {
             operands: operands
                 .iter()
@@ -2146,6 +2440,136 @@ fn expand_expr(
             span: *span,
         }),
         _ => Ok(expr.clone()),
+    }
+}
+
+fn lower_reflective_expressions(program: &Program) -> Result<Program, LanguageError> {
+    let functions = BTreeMap::new();
+    let mut env = BTreeMap::new();
+    let mut bindings = Vec::with_capacity(program.bindings.len());
+    for binding in &program.bindings {
+        let value = lower_reflective_expr(&binding.value, &env, &program.source_name)?;
+        let state = evaluate(
+            &value,
+            &env,
+            &functions,
+            &mut Vec::new(),
+            &program.source_name,
+        )?;
+        env.insert(binding.name.clone(), state);
+        bindings.push(Binding {
+            name: binding.name.clone(),
+            span: binding.span,
+            value,
+        });
+    }
+    let result = lower_reflective_expr(&program.result, &env, &program.source_name)?;
+    Ok(Program {
+        functions: Vec::new(),
+        bindings,
+        goal: program.goal,
+        output_kind: program.output_kind,
+        result,
+        source_name: program.source_name.clone(),
+        span: program.span,
+    })
+}
+
+fn lower_reflective_expr(
+    expr: &Expr,
+    env: &BTreeMap<String, NativeState>,
+    source: &str,
+) -> Result<Expr, LanguageError> {
+    match expr {
+        Expr::Untrace {
+            value,
+            maximum_error_ratio,
+            ..
+        } => {
+            let value = lower_reflective_expr(value, env, source)?;
+            let state = evaluate(&value, env, &BTreeMap::new(), &mut Vec::new(), source)?;
+            if crate::strand::is_operation_strand(&state) {
+                return Ok(state_expression(&state));
+            }
+            let continuation =
+                crate::continuation::synthesize(&state, maximum_error_ratio, source, expr.span())?;
+            let strand = continuation.strand_expression(source, expr.span())?;
+            lower_reflective_expr(&strand, env, source)
+        }
+        Expr::Add { operands, span } => Ok(Expr::Add {
+            operands: operands
+                .iter()
+                .map(|operand| lower_reflective_expr(operand, env, source))
+                .collect::<Result<Vec<_>, _>>()?,
+            span: *span,
+        }),
+        Expr::Multiply { operands, span } => Ok(Expr::Multiply {
+            operands: operands
+                .iter()
+                .map(|operand| lower_reflective_expr(operand, env, source))
+                .collect::<Result<Vec<_>, _>>()?,
+            span: *span,
+        }),
+        Expr::Orient { turns, value, span } => Ok(Expr::Orient {
+            turns: *turns,
+            value: Box::new(lower_reflective_expr(value, env, source)?),
+            span: *span,
+        }),
+        Expr::Index {
+            direction,
+            multiplicity,
+            value,
+            span,
+        } => Ok(Expr::Index {
+            direction: *direction,
+            multiplicity: *multiplicity,
+            value: Box::new(lower_reflective_expr(value, env, source)?),
+            span: *span,
+        }),
+        Expr::Call { .. } | Expr::Trace { .. } => {
+            unreachable!("function calls and trace are lowered before untrace staging")
+        }
+        _ => Ok(expr.clone()),
+    }
+}
+
+pub(crate) fn state_expression(state: &NativeState) -> Expr {
+    let mut terms = state
+        .0
+        .iter()
+        .map(|(index, coefficient)| {
+            let mut value = if *coefficient == NativeScalar::one() {
+                Expr::One { span: None }
+            } else {
+                Expr::Scalar {
+                    real: rational_text(&coefficient.real),
+                    imag: rational_text(&coefficient.imag),
+                    span: None,
+                }
+            };
+            for (&direction, depth) in &index.0 {
+                let mut remaining = depth.clone();
+                while !remaining.is_zero() {
+                    let multiplicity = remaining.to_u64().unwrap_or(u64::MAX);
+                    remaining -= BigUint::from(multiplicity);
+                    value = Expr::Index {
+                        direction,
+                        multiplicity,
+                        value: Box::new(value),
+                        span: None,
+                    };
+                }
+            }
+            value
+        })
+        .collect::<Vec<_>>();
+    match terms.len() {
+        0 => Expr::Zero { span: None },
+        1 => terms.remove(0),
+        _ => Expr::Add {
+            operands: terms,
+            span: None,
+        },
     }
 }
 
@@ -2382,6 +2806,19 @@ fn optimize_expr(expr: &Expr, events: &mut Vec<RewriteEvent>) -> Expr {
                 .collect(),
             span: *span,
         },
+        Expr::Trace { function, span } => Expr::Trace {
+            function: function.clone(),
+            span: *span,
+        },
+        Expr::Untrace {
+            value,
+            maximum_error_ratio,
+            span,
+        } => Expr::Untrace {
+            value: Box::new(optimize_expr(value, events)),
+            maximum_error_ratio: maximum_error_ratio.clone(),
+            span: *span,
+        },
         _ => expr.clone(),
     }
 }
@@ -2576,5 +3013,24 @@ mod tests {
             output_data(&NativeState::one(), OutputKind::Boolean).unwrap()["value"],
             true
         );
+    }
+
+    #[test]
+    fn source_function_accepts_repeated_exact_host_invocation() {
+        let program = parse(
+            "let combine = (left, right) => add(left, right)\noutput zero",
+            "callable.ns",
+        )
+        .unwrap();
+        let function = exact_function(&program, "combine").unwrap();
+        let two = NativeState::scalar(NativeScalar::from_text("2", "0").unwrap());
+        let three = NativeState::scalar(NativeScalar::from_text("3", "0").unwrap());
+
+        assert_eq!(function.parameter_count(), 2);
+        assert_eq!(
+            function.apply(&[two, three]).unwrap(),
+            NativeState::scalar(NativeScalar::from_text("5", "0").unwrap())
+        );
+        assert_eq!(function.apply(&[]).unwrap_err().0.code, "NSE002");
     }
 }

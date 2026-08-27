@@ -8,7 +8,7 @@ mod mcp;
 use std::path::Path;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use mimalloc::MiMalloc;
 use native_space_language::expansion::{derive, format_report, relativize_paths};
 use native_space_language::{Document, compile, inspect, load_document};
@@ -33,6 +33,59 @@ enum Command {
     Inspect { file: String },
     /// Compile to schema-1 bytecode or a recomputable proof certificate.
     Compile { file: String },
+    /// Synthesize a verified program for one classical complex projection.
+    Frequency {
+        /// Exact-state source whose result contains the indexed samples.
+        file: String,
+        /// First positive INDEX direction in the projected window.
+        #[arg(long, default_value_t = 1)]
+        first_index: u64,
+        /// Number of projected samples in the finite window.
+        #[arg(long)]
+        samples: usize,
+        /// Maximum absolute classical reconstruction error.
+        #[arg(long, default_value = "1e-12")]
+        maximum_error: String,
+    },
+    /// Synthesize the smallest supported continuation from indexed observations.
+    Untrace {
+        /// Maximum exact ratio of held-out observation indexes allowed to disagree.
+        #[arg(long, default_value = "0")]
+        maximum_error_ratio: String,
+        /// Existing exact-state observation document.
+        #[arg(required_unless_present = "input")]
+        file: Option<String>,
+        /// Ordered JSON/NSBATCH states or scalar CSV.
+        #[arg(long, conflicts_with = "file")]
+        input: Option<String>,
+        /// Generated source or the exact operation pattern as CSV.
+        #[arg(long, value_enum, default_value_t = UntraceOutput::Source)]
+        output: UntraceOutput,
+    },
+    /// Run one unary function over independent data points for a fixed step count.
+    Batch {
+        /// Exact-state source containing the selected unary function.
+        file: String,
+        /// Unary source-function name.
+        #[arg(long)]
+        function: String,
+        /// Ordered JSON or NSBATCH binary data file.
+        #[arg(long)]
+        data: String,
+        /// Sequential applications per data point.
+        #[arg(long)]
+        steps: u64,
+        /// Execution device; neither backend silently falls back to the other.
+        #[arg(long, value_enum, default_value_t = BatchBackend::Cpu)]
+        backend: BatchBackend,
+    },
+    /// Pack readable batch data into the versioned binary input format.
+    PackData {
+        /// JSON batch data to validate and pack.
+        input: String,
+        /// Binary data file to create.
+        output: String,
+    },
     /// Expand one function into primitive operations.
     Derive {
         /// Emit the complete machine-readable report.
@@ -50,6 +103,18 @@ enum Command {
     Mcp,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum BatchBackend {
+    Cpu,
+    Gpu,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum UntraceOutput {
+    Source,
+    PatternCsv,
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     match Cli::parse().command {
@@ -65,6 +130,29 @@ async fn main() -> ExitCode {
                 |error| report_error(&error),
                 |artifact| print_json(&artifact),
             ),
+        Command::Frequency {
+            file,
+            first_index,
+            samples,
+            maximum_error,
+        } => frequency_file(&file, first_index, samples, &maximum_error),
+        Command::Untrace {
+            maximum_error_ratio,
+            file,
+            input,
+            output,
+        } => match input.as_deref().or(file.as_deref()) {
+            Some(source) => untrace_file(source, input.is_some(), &maximum_error_ratio, output),
+            None => report_error("untrace requires a source document or --input data file"),
+        },
+        Command::Batch {
+            file,
+            function,
+            data,
+            steps,
+            backend,
+        } => batch_file(&file, &function, &data, steps, backend).await,
+        Command::PackData { input, output } => pack_data_file(&input, &output),
         Command::Derive {
             json,
             source,
@@ -79,6 +167,149 @@ async fn main() -> ExitCode {
             }
         },
     }
+}
+
+fn pack_data_file(input: &str, output: &str) -> ExitCode {
+    native_space_language::batch::pack_data(input, output).map_or_else(
+        |error| report_error(&error.to_string()),
+        |count| {
+            println!("Packed {count} data points: {output}");
+            ExitCode::SUCCESS
+        },
+    )
+}
+
+fn frequency_file(file: &str, first_index: u64, samples: usize, maximum_error: &str) -> ExitCode {
+    let result = read_document(file).and_then(|document| {
+        let Document::State(program) = document else {
+            return Err("frequency expects an exact-state source document".into());
+        };
+        let state =
+            native_space_language::core::interpret(&program).map_err(|error| error.to_string())?;
+        native_space_language::frequency::synthesize(
+            &state,
+            first_index,
+            samples,
+            maximum_error,
+            &program.source_name,
+        )
+        .map(|frequency| frequency.to_data())
+        .map_err(|error| error.to_string())
+    });
+    result.map_or_else(|error| report_error(&error), |value| print_json(&value))
+}
+
+async fn batch_file(
+    file: &str,
+    function: &str,
+    data: &str,
+    steps: u64,
+    backend: BatchBackend,
+) -> ExitCode {
+    let result = async {
+        let document = read_document(file)?;
+        let Document::State(program) = document else {
+            return Err("batch expects an exact-state source document".into());
+        };
+        let inputs =
+            native_space_language::batch::read_data(data).map_err(|error| error.to_string())?;
+        match backend {
+            BatchBackend::Cpu => {
+                native_space_language::batch::execute_cpu(&program, function, &inputs, steps)
+                    .map(|results| {
+                        native_space_language::batch::output_data("cpu", steps, &inputs, &results)
+                    })
+                    .map_err(|error| error.to_string())
+            }
+            BatchBackend::Gpu => {
+                let execution =
+                    native_space_language::gpu::execute(&program, function, &inputs, steps)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                let mut output = native_space_language::batch::output_data(
+                    "gpu",
+                    steps,
+                    &inputs,
+                    &execution.results,
+                );
+                output
+                    .as_object_mut()
+                    .expect("batch output is an object")
+                    .insert("adapter".into(), execution.adapter_name.into());
+                Ok(output)
+            }
+        }
+    }
+    .await;
+    result.map_or_else(|error| report_error(&error), |value| print_json(&value))
+}
+
+fn untrace_file(
+    file: &str,
+    data_input: bool,
+    maximum_error_ratio: &str,
+    output: UntraceOutput,
+) -> ExitCode {
+    let result = if data_input {
+        untrace_data(file, maximum_error_ratio)
+    } else {
+        read_document(file).and_then(|document| {
+            let Document::State(program) = document else {
+                return Err("untrace expects an exact-state observation document".into());
+            };
+            let state = native_space_language::core::interpret(&program)
+                .map_err(|error| error.to_string())?;
+            native_space_language::continuation::synthesize(
+                &state,
+                maximum_error_ratio,
+                &program.source_name,
+                program.result.span(),
+            )
+            .map_err(|error| error.to_string())
+        })
+    }
+    .and_then(|continuation| match output {
+        UntraceOutput::Source => Ok(continuation.source().to_owned()),
+        UntraceOutput::PatternCsv => continuation
+            .pattern_csv()
+            .map_err(|error| error.to_string()),
+    });
+    result.map_or_else(
+        |error| report_error(&error),
+        |source| {
+            print!("{source}");
+            ExitCode::SUCCESS
+        },
+    )
+}
+
+fn untrace_data(
+    file: &str,
+    maximum_error_ratio: &str,
+) -> Result<native_space_language::continuation::Continuation, String> {
+    let extension = Path::new(file)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase);
+    if extension.as_deref() == Some("csv") {
+        let state = native_space_language::continuation::read_observations_csv(file)
+            .map_err(|error| error.to_string())?;
+        return native_space_language::continuation::synthesize(
+            &state,
+            maximum_error_ratio,
+            file,
+            None,
+        )
+        .map_err(|error| error.to_string());
+    }
+    let inputs =
+        native_space_language::batch::read_data(file).map_err(|error| error.to_string())?;
+    let values = inputs
+        .into_iter()
+        .map(native_space_language::batch::DataPoint::into_state)
+        .collect::<Vec<_>>();
+    native_space_language::continuation::synthesize_states(&values, maximum_error_ratio, file)
+        .map_err(|error| error.to_string())
 }
 
 fn read_document(file: &str) -> Result<Document, String> {

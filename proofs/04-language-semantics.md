@@ -22,7 +22,10 @@ function, operator, and binding name is unique, no declaration shadows a core
 operation or grammar word, every call names a source-defined function with
 matching arity, function bodies reference only their parameters, every
 reference in a binding names an earlier binding, every result reference names a binding,
-the exact-state function-call graph is acyclic, every `Add` and `Multiply` has
+every function path executed by the exact-state result is acyclic, every
+`trace(function)` target names a source function, every `untrace(value)` or
+`untrace(value, maximum_error_ratio)` has one finite value expression and an
+exact rational error ratio from zero through one, every `Add` and `Multiply` has
 at least two operands, and every `Index` direction and multiplicity is
 positive. All
 scalar coordinates are exact rational elements of the real-field substrate.
@@ -93,6 +96,251 @@ A manually constructed state may have the same shape, and arbitrary native
 operations need not preserve that shape. String algorithms and
 programming-language types require separate definitions.
 
+### D-LANG-TRACE-1 -- reflective operation strand [Definition]
+
+For one parsed source function $f$, `trace(f)` traverses the finite graph of
+source functions reachable from $f$. It writes each definition once and keeps
+every call as an explicit edge. Its result is the nested native strand
+
+$$
+\mathrm{Node}(h,t)=
+\mathrm{ADD}
+\left(
+\mathrm{INDEX}_{H}(h),
+\mathrm{INDEX}_{C}(t)
+\right),
+$$
+
+where $h$ is one complete instruction coordinate and $t$ is the continuation.
+Instruction coordinates have disjoint fields for kind, opcode, names, numeric
+arguments, UTF-8 bytes, byte positions, and source span. ADD, MULTIPLY, ORIENT,
+and INDEX use opcode orientations 0, 1, 2, and 3 respectively. Trace and
+untrace syntax have their own non-opcode instruction kinds. Prefix arities
+preserve the expression tree. Repeated continuation indexing preserves exact
+strand order. Zero is the unique terminal continuation.
+
+`trace` is a reflective language function, not an algebra operation. Its
+result expression contains only exact constants, ADD, ORIENT, and INDEX. A
+recursive source call remains a call edge; it is never repeatedly executed by
+the trace construction.
+
+### T-LANG-TRACE-1 -- trace preserves the finite source graph [Proved]
+
+**Statement.** `trace(f)` terminates for every finite well-formed source graph
+reachable from $f$, and its operation-strand coordinate uniquely reconstructs
+that parsed graph, including direct and mutual self-reference.
+
+**Dependencies.** D-LANG-TRACE-1, D-NS-2, L-SEP-2, uniqueness of UTF-8,
+finite map and set semantics.
+
+**Proof.** The traversal keeps a visited function-name set. A function not in
+the set contributes its finite parameter list and finite expression tree, then
+enters the set. A function already in the set contributes only the call edge
+already present in its caller. Therefore at most the finite number of reachable
+definitions is traversed, so construction terminates even on a cycle.
+
+For reconstruction, continuation depth selects exactly one strand position.
+Within that position, the head, kind, opcode, text, number, and span directions
+are disjoint. Text byte position is an INDEX depth and its positive coefficient
+is the byte plus one, so no byte disappears as zero. The instruction kind and
+arity determine the unique prefix-tree boundary. Function-start and
+function-end coordinates delimit each definition, while named call coordinates
+recover every graph edge. Reading increasing continuation depth therefore
+recovers the same parsed reachable graph. Hence the encoding is injective on
+that graph and preserves self-reference without unfolding it. $\square$
+
+**Boundary.** Comments and whitespace are discarded by parsing and are not
+instructions. Executing a recursive exact-state call remains invalid; this
+theorem concerns finite source observation, not unbounded computation or
+optimization performance.
+
+### D-LANG-UNTRACE-1 -- ratio-bounded recurrence synthesis [Definition]
+
+Let the decoded ordered observations be complete canonical native states
+$X_0,\ldots,X_{n-1}$. A CLI JSON or `NSBATCH` root supplies that sequence
+directly and is retained in memory as one continuous synthesis state. In the
+compact scalar source layout, consecutive one-depth INDEX directions are the
+observation positions and missing directions inside the retained span are zero
+states. In the structured source layout, INDEX direction 1 is the sequence
+axis, its depth is the 1-based position, and every remaining coordinate is the
+payload of that state.
+
+For a candidate order $r$ with $2r<n$, the Language 1.0 synthesis grammar is
+
+$$
+X_j=a_1\star X_{j-1}\oplus\cdots\oplus a_r\star X_{j-r},
+$$
+
+where $a_1,\ldots,a_r$ are exact native scalars and scalar multiplication acts
+on every coordinate of the complete state. The same coefficients must satisfy
+every coordinate; coordinates are neither flattened nor fitted independently.
+
+The first $r$ states are seeds. Exact Gaussian elimination over native complex
+rationals uses every coordinate equation at positions $r$ through $2r-1$ to
+determine the leftmost-pivot solution, setting free coefficients to zero.
+Every later supplied state is held out from coefficient construction. Starting
+from the seeds, the candidate recursively generates
+$\widehat X_r,\ldots,\widehat X_n$ without replacing a generated state by a
+supplied observation. For an exact rational maximum error ratio
+$\alpha\in[0,1]$, define the held-out position-error set
+
+$$
+E_r=\{j:2r\leq j<n\text{ and }\widehat X_j\neq X_j\}.
+$$
+
+`untrace(value)` means $\alpha=0$; `untrace(value, alpha)` accepts a candidate
+exactly when
+
+$$
+\frac{|E_r|}{n-2r}\leq\alpha.
+$$
+
+At least one held-out position exists because $2r<n$, so the ratio is defined.
+
+Candidate ordering first minimizes $|E_r|/(n-2r)$, then the number of seed
+nodes plus recurrence-expression nodes. Source byte length, lower order, and
+lexical source order break ties. Search is finite and exhaustive over candidate
+orders $1\leq r\leq32$ with $2r<n$. All supplied file observations remain
+available as training or held-out evidence; there is no 64-observation
+truncation. A successful result contains three source functions: the exact next
+state, a continuation that increments its scalar position and recursively
+shifts its state window, and a seed entry function. `trace` encodes this finite
+self-referential graph as the returned operation strand. The readable source
+also reports $\alpha$, the actual exact ratio, and every position in $E_r$.
+
+### T-LANG-UNTRACE-1 -- accepted continuations obey the error ratio [Proved]
+
+**Statement.** If `untrace(E)` succeeds, its returned strand uniquely encodes
+the deterministically selected recurrence program and exactly regenerates all
+held-out observations. If `untrace(E,alpha)` succeeds, its reported mismatch
+set is exactly $E_r$ and its held-out error ratio is at most $\alpha$.
+
+**Dependencies.** D-LANG-UNTRACE-1, D-LANG-TRACE-1, exact field elimination,
+finite bounded search.
+
+**Proof.** For fixed order $r$, each training-state equality is equivalent to
+the collection of its scalar coordinate equations, with absent coordinates
+equal to exact zero. Row reduction applies invertible field row operations,
+rejects an inconsistent row, chooses pivots left to right, and sets free
+variables to zero. It therefore returns one deterministic shared coefficient
+solution to all training coordinates when one exists. The implementation then
+recursively generates complete states from the seeds through position $n$,
+compares canonical native states at every held-out position, and records
+precisely the unequal positions. Exact rational comparison of
+$|E_r|/(n-2r)$ with $\alpha$ makes filtering equivalent to the declared
+acceptance rule without floating point. When $\alpha=0$, the mismatch set is
+empty and every held-out state is regenerated exactly. Since $2r<n$, at least
+one compared state was absent from coefficient construction and is held out.
+
+There are finitely many supported orders. Each accepted candidate has a finite
+exact-ratio-and-cost tuple, and total tuple ordering selects one unique minimum. The generated
+function graph has finitely many definitions and one recursive edge.
+T-LANG-TRACE-1 therefore encodes it as one finite injective operation strand.
+$\square$
+
+**Boundary.** This theorem proves exact mismatch accounting on supplied
+held-out evidence and minimality only inside D-LANG-UNTRACE-1's grammar. A
+positive error ratio deliberately permits disagreement; it is not a proof of
+those observations. The theorem does not prove that an
+unseen prediction is correct, that the grammar contains the source process, or
+that a globally shortest program is computable. Failure is reported rather
+than replaced by a fitted lookup. The grammar has one shared scalar recurrence;
+it does not infer coordinate-specific matrices, nonlinear transitions, or an
+AI model. Existing operation strands are fixed points of `untrace`.
+
+### D-LANG-BATCH-1 -- pointwise stepped execution [Definition]
+
+For a unary exact function $f$, ordered inputs $x_0,\ldots,x_{m-1}$, and a
+finite nonnegative step count $k$, define
+
+$$
+B_f^k(x_0,\ldots,x_{m-1})=
+\left(f^k(x_0),\ldots,f^k(x_{m-1})\right).
+$$
+
+The $k$ applications inside one $f^k(x_j)$ are sequential. Distinct $j$
+positions have no data dependency and may be evaluated concurrently. Results
+retain input order. Batch selection, data loading, step count, and execution
+backend are host parameters, not Native Space expression forms.
+
+Let $A$ be a nonempty rectangular host array of rank $r\leq64$. For its leaf at
+the 1-based position $p=(p_1,\ldots,p_r)$, define
+
+$$
+I_p(A_p)=\mathrm{INDEX}_1^{p_1}\circ\cdots\circ
+\mathrm{INDEX}_r^{p_r}(A_p).
+$$
+
+The array lowers to the finite native ADD state
+
+$$
+L(A)=\boxplus_p I_p(A_p).
+$$
+
+For example, `[x,y]` lowers to
+`add(index(1,x),index(1,index(1,y)))`. A rank-2 leaf at position $(2,1)$
+uses INDEX direction 1 at depth 2 and direction 2 at depth 1. Therefore it is
+distinct from position $(1,2)$ even though INDEX composition is commutative.
+Empty, ragged, and mixed-rank arrays have no lowering. Thus an accepted array
+is one ordinary native state, not an array primitive. Retaining its shape for
+readable output does not alter that state's denotation.
+
+JSON is the readable host encoding. The version-1 `NSBATCH` binary encoding
+stores the same optional shape and sparse native terms with explicit lengths.
+Packing followed by binary decoding is defined to reconstruct that exact pair.
+Unsupported versions, malformed or noncanonical terms, shape mismatches, and
+trailing bytes are outside the format and are rejected.
+
+The exact GPU domain is the subset whose inputs, constants, and every
+intermediate result are real signed-32-bit integers and whose expanded function
+contains only ADD, MULTIPLY, and even ORIENT turns. GPU addition detects a sign
+change inconsistent with its addend signs. GPU multiplication compares unsigned
+magnitudes with the signed result limit before multiplying. GPU negation rejects
+the least signed integer. An overflow flag aborts the complete result. Other
+native values and operations are outside this GPU target and are rejected.
+
+### T-LANG-BATCH-1 -- CPU and accepted GPU batches are pointwise exact [Proved]
+
+**Statement.** Array lowering $L$ is injective in leaf position, JSON-to-binary
+packing preserves every accepted input state and host shape, and CPU batch
+execution returns $B_f^k$ under D-LANG-2. Whenever the GPU backend accepts the
+same supported inputs without an overflow flag, it returns the same ordered
+integer scalars as CPU batch execution.
+
+**Dependencies.** D-LANG-BATCH-1, T-LANG-INTERP-1, exact two's-complement
+signed-32-bit arithmetic within range.
+
+**Proof.** The native multi-index of $I_p(A_p)$ is the finite map $a\mapsto p_a$.
+If positions $p$ and $q$ differ, then $p_a\neq q_a$ on at least one axis $a$,
+so their multi-indices differ. Hence no two array positions collide. Shape and
+the nonzero sparse terms reconstruct all leaves, with omitted terms read as
+exact zero. The binary encoder writes those same fields; its decoder reads each
+field without a coordinate conversion, so accepted packing round-trips the
+same input pair.
+
+Each CPU worker invokes the same exact unary evaluator $k$ times on one
+immutable input and stores the result at that input's position. Worker
+partitioning neither shares a state nor changes position order, so every output
+is $f^k(x_j)$.
+
+For GPU ADD, the unsigned-bit addition is the two's-complement encoding of
+integer addition whenever the sign test reports no overflow. For MULTIPLY, the
+magnitude bound is exactly the positive limit $2^{31}-1$ or negative limit
+$2^{31}$; absence of its overflow flag therefore makes the encoded product the
+integer product. Even ORIENT turns are identity or exact negation, with
+$-2^{31}$ rejected before negation. Structural induction on the expanded step
+expression gives the same integer result as D-LANG-2 whenever no flag is set.
+Induction on the sequential step counter gives $f^k(x_j)$. One invocation owns
+one $j$, and reconstruction reads invocation positions in order. Hence every
+accepted GPU result equals the CPU result and both equal $B_f^k$. $\square$
+
+**Boundary.** The retained shape is host metadata, not native state. This proves
+the specified lowering and encoding equality, not that the Rust or shader
+implementation is formally verified and not that binary parsing or a GPU is
+faster. Unsupported values, malformed data, unavailable adapters, more than
+1,000,000 GPU steps, and overflow are diagnostics; there is no approximate
+conversion or backend fallback.
+
 ### D-LANG-2 -- expression denotation
 
 For an environment
@@ -120,13 +368,21 @@ $$
 \llbracket\texttt{index}(k,E)\rrbracket_\rho
   &= \mathrm{INDEX}_k(\llbracket E\rrbracket_\rho),\\
 \llbracket\mathrm{IndexNode}(k,d,E)\rrbracket_\rho
-  &= \mathrm{INDEX}_k^d(\llbracket E\rrbracket_\rho).
+  &= \mathrm{INDEX}_k^d(\llbracket E\rrbracket_\rho),\\
+\llbracket\texttt{trace}(f)\rrbracket_\rho
+  &= \mathrm{OperationStrand}(f),\\
+\llbracket\texttt{untrace}(E,\alpha)\rrbracket_\rho
+  &= \mathrm{ContinuationStrand}(\llbracket E\rrbracket_\rho,\alpha),
+  \qquad \alpha\in\mathbb{Q}\cap[0,1].
 \end{aligned}
 $$
 
 String literals use D-LANG-UTF8-1. A call evaluates its arguments, binds the
 resulting values to the called source function's parameters, and evaluates its
 body. Function names have no denotational case of their own.
+`ContinuationStrand` is partial: an incompatible layout, exhausted search
+budget, absent next index, or lack of a held-out-validated recurrence produces
+the corresponding `NSU` diagnostic rather than a native value.
 
 The displayed n-ary operations are left folds in source order. Associativity
 from L-NS-2 and L-NS-5 makes the parenthesization immaterial, but no
@@ -194,7 +450,13 @@ compares the direct and compiled results, then applies the goal.
 ### D-LANG-4 -- compilation
 
 Source calls are recursively erased by parameter substitution before bytecode
-generation. Expression compilation is then compositional:
+generation. `trace(f)` is first replaced by its D-LANG-TRACE-1 expression, so
+reflection observes the original source graph and the VM has no trace opcode.
+Each `untrace(E,alpha)` is then evaluated in the exact environment of its earlier
+bindings and replaced by D-LANG-UNTRACE-1's continuation operation strand. The
+VM has no untrace opcode.
+Only then may D-LANG-5 optimizer rewrites alter the executable expression.
+Expression compilation is compositional:
 
 - constants emit their matching `PUSH` instruction;
 - a reference emits `LOAD` for its earlier binding slot;
@@ -229,17 +491,23 @@ or different camera tag is rejected rather than interpreted as lossless state.
 
 ### T-LANG-INTERP-1 -- direct evaluation equals denotation [Proved]
 
-**Statement.** For every well-formed program $P$, direct evaluation
-terminates and returns $\llbracket P\rrbracket$.
+**Statement.** Direct evaluation of every finite well-formed program $P$
+terminates. If no defined partial construction emits a diagnostic, it returns
+$\llbracket P\rrbracket$.
 
-**Dependencies.** D-LANG-1, D-LANG-2, D-NS-3 through D-NS-10.
+**Dependencies.** D-LANG-1, D-LANG-2, T-LANG-TRACE-1,
+T-LANG-UNTRACE-1, D-NS-3 through D-NS-10.
 
 **Proof.** Proceed by structural induction on expressions. Each base node is
 returned using exactly its D-LANG-2 constructor. A reference is present in the
 environment by D-LANG-1. In the induction cases, recursive calls return the
 child denotations; the interpreter then applies the same native ADD,
 MULTIPLY, ORIENT, or INDEX operation as D-LANG-2. The AST is finite, so the
-recursion terminates.
+recursion terminates. For `trace(f)`, T-LANG-TRACE-1 first constructs one
+finite core expression and the same induction applies to that expression.
+For `untrace(E,alpha)`, T-LANG-UNTRACE-1 either returns a typed finite-search
+diagnostic or constructs the finite continuation-strand expression assigned by
+D-LANG-2, and the same induction applies to that expression.
 
 Proceed next by induction over the finite binding sequence. Initially both the
 semantic and interpreter environments are empty. Assuming equality through
@@ -270,13 +538,15 @@ with the D-LANG-2 fold and leaves the preceding stack untouched. For a unary
 node, the induction hypothesis appends the child value and the following
 instruction replaces it by the corresponding ORIENT or INDEX denotation.
 `INDEX(k,d)` applies exact repeated INDEX multiplicity in one typed
-instruction. No expression
+instruction. Trace and untrace nodes are absent here because D-LANG-4 lowers
+both to finite core expressions before this induction. No expression
 instruction stores a slot. $\square$
 
 ### T-LANG-COMP-1 -- compiled execution equals direct evaluation [Proved]
 
-**Statement.** For every well-formed program $P$, compilation followed by VM
-execution returns the same canonical native state as direct evaluation:
+**Statement.** For every well-formed program $P$ that compiles, compilation
+followed by VM execution returns the same canonical native state as direct
+evaluation:
 
 $$
 \mathrm{VM}(\mathrm{compile}(P))
@@ -389,8 +659,9 @@ $\square$
 - They do not cover future approximate values, camera execution, conventional
   prime-value lookup, automatic factorization, loops, unbounded recursive
   execution, effects, or compiler targets other than schema-1 bytecode.
-- Source-function self-reference **is** covered separately by D-FLANG-2 and
-  T-FLANG-SELF-1 in `14-analytic-language-semantics.md`: an active repeated
-  call becomes one finite pattern-reference edge. What is not covered is
-  repeatedly unfolding that edge as an unbounded computation or treating it
-  as a completed exact state.
+- Source-function self-reference is covered by two finite observations.
+  D-FLANG-2 and T-FLANG-SELF-1 retain an active repeated derivation call as a
+  pattern-reference edge. D-LANG-TRACE-1 and T-LANG-TRACE-1 return the parsed
+  reachable exact-function graph as native coordinates. Neither result
+  repeatedly unfolds that edge as an unbounded computation or treats it as a
+  completed recursive execution.

@@ -526,6 +526,238 @@ expand completely to `ADD`, `MULTIPLY`, `ORIENT`, and `INDEX`. UTF-8 strings
 lower to indexed byte patterns rather than introducing a fifth string
 operation.
 
+The built-in `trace(function)` now exposes an exact-state source function as a
+nested native **operation strand**. Each instruction is the head coordinate;
+the rest of the program is nested under its continuation coordinate. Function
+names, parameters, arguments, calls, source positions, and the four operation
+identities remain recoverable. Recursive calls remain finite edges to an
+already encoded function instead of becoming an array or an unbounded
+execution.
+
+```ns
+let quarter_step = (value) => add(index(7, value), orient(1, value))
+output trace(quarter_step) as pattern
+```
+
+`trace` is reflection, not a fifth algebra operation. Before bytecode is made,
+the compiler lowers its result to exact constants and nested `ADD`, `ORIENT`,
+and `INDEX` coordinates. The ordinary evaluator and VM then agree on that
+native state.
+
+`untrace(value)` goes from indexed observations back to a continuation program.
+The current exact synthesis grammar is one homogeneous constant-coefficient
+linear recurrence over complete native states. Its coefficients are exact
+native scalars, but its observations may be scalars, vectors, matrices, or
+higher-rank indexed states. One coefficient sequence must work for every
+coordinate; `untrace` never flattens the state or learns unrelated rules per
+coordinate.
+
+Candidate coefficients are learned from a prefix and then compared with every
+held-out supplied position along the recursively generated path. With the
+default zero ratio, every held-out state must match exactly. With a positive
+ratio, the lowest exact position-error ratio wins before seed-plus-expression
+size; source length and recurrence order break remaining ties deterministically.
+
+```ns
+let observations = () =>
+add(
+  index(1, 1), index(2, 1), index(3, 2), index(4, 3),
+  index(5, 5), index(6, 8), index(7, 13)
+)
+
+output untrace(observations()) as pattern
+```
+
+Here `untrace` finds the order-two rule
+`next = add(previous_1, previous_2)`, verifies it on indexes 5 through 7, and
+predicts index 8 as 21. Its result is a nested operation strand containing the
+rule, its seed states, an explicit position increment, and one recursive edge
+that represents continuation without unfolding it.
+
+If observations may contain isolated errors, give an explicit maximum ratio:
+
+```ns
+let observations = () =>
+add(index(1, 1), index(2, 1), index(3, 2), index(4, 3), index(5, 5), index(6, 8), index(7, 13), index(8, 21), index(9, 35))
+
+output untrace(observations(), 1/5) as pattern
+```
+
+The generated continuation still produces Fibonacci value 34 at index 9 and
+reports index 9 as the one mismatch among five held-out indexes. It then
+predicts 55 at index 10. The
+runtime compares the recursively generated path with each held-out observation;
+it does not feed a mismatching observation back into the path. Candidate
+selection minimizes the exact mismatch ratio first and program size second.
+
+The readable generated `.ns` source is available directly:
+
+```powershell
+cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- untrace examples/continuation-observations.ns
+```
+
+The command-line form accepts the same exact ratio:
+
+```powershell
+cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- untrace --maximum-error-ratio 1/5 examples/continuation-observations-with-error.ns
+```
+
+For structured data, the JSON or `NSBATCH` root is one ordered observation
+sequence. The complete file is loaded into memory once and retained as one
+continuous synthesis state. No chunk boundary resets the recurrence, and no
+frequency projection discards native coordinates:
+
+```json
+[
+  ["1", "2"],
+  ["1", "3"],
+  ["2", "5"],
+  ["3", "8"],
+  ["5", "13"],
+  ["8", "21"],
+  ["13", "34"]
+]
+```
+
+```powershell
+cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- untrace --input examples/untrace-array-data.json
+```
+
+This discovers the shared order-two rule, checks the three held-out vector
+states, and predicts `[21, 55]`. The generated `.ns` file contains complete
+native seed states and can be run directly; see
+[`examples/untrace-array-model.ns`](examples/untrace-array-model.ns).
+
+Scalar observations may also come from CSV. For scalar models, `untrace` can
+return the discovered seeds, recurrence coefficients, mismatches, and next
+prediction as a compact CSV pattern instead of generated source:
+
+```powershell
+cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- untrace --input examples/continuation-observations.csv --output pattern-csv
+```
+
+```csv
+part,index,real,imag
+seed,1,1,0
+seed,2,1,0
+coefficient,1,1,0
+coefficient,2,1,0
+prediction,8,21,0
+```
+
+
+For repeated work over many independent inputs, keep the step function in
+ordinary `.ns` source and pass the data file and step count only to the CLI:
+
+```ns
+let step = (value) => add(multiply(value, 2), 1)
+output 0
+```
+
+```json
+["1", "2", "3", "4", "5", "6", "7", "8"]
+```
+
+```powershell
+cargo run --manifest-path language/runtime/Cargo.toml --features gpu --release --bin native-space -- batch examples/batch-program.ns --function step --data examples/batch-data.json --steps 3 --backend gpu
+```
+
+This returns `15, 23, 31, 39, 47, 55, 63, 71`. The three steps for one
+value remain sequential:
+
+```text
+x -> 2x + 1 -> 2(2x + 1) + 1 -> 2(2(2x + 1) + 1) + 1
+```
+
+Parallel work happens across the eight independent values. `--backend cpu`
+uses bounded CPU workers and the full exact native state algebra. `--backend
+gpu` dispatches one compute invocation per value. The current GPU backend is
+an exact signed-32-bit scalar target for integer constants, ADD, MULTIPLY, and
+even ORIENT turns. It rejects fractions, complex values, INDEX states, odd
+ORIENT turns, unavailable hardware, and overflow. It never changes to floating
+point and never silently falls back to CPU. GPU execution is implemented and
+cross-checked against CPU output, but no speedup is claimed without a benchmark
+large enough to exceed device setup and transfer costs.
+
+GPU support is optional and disabled in the default Cargo feature set. Build
+with `--features gpu` to enable it. A CPU-only binary still recognizes
+`--backend gpu` but returns a clear error instead of falling back. Official
+release binaries enable the feature. The build contract is documented in
+[`language/GPU.md`](language/GPU.md).
+
+Batch execution is a host facility, not another language operation. The data
+file can contain real rational strings, `{ "real": "...", "imag": "..." }`
+scalars, canonical flat-stack state objects, or nonempty rectangular arrays of
+rank 1 through 64. The brackets add no array primitive. Array axis $a$ becomes
+INDEX direction $a$; 1-based position $p$ becomes $p$ nested applications of
+that INDEX. Input lowering therefore uses only ordinary ADD and INDEX:
+
+```text
+[x, y]
+-> add(index(1, x), index(1, index(1, y)))
+
+[[a, b], [c, d]]
+-> add(
+     index(1, index(2, a)),
+     index(1, index(2, index(2, b))),
+     index(1, index(1, index(2, c))),
+     index(1, index(1, index(2, index(2, d))))
+   )
+```
+
+This axis/depth rule keeps positions $(1,2)$ and $(2,1)$ distinct. Empty,
+ragged, and mixed-rank arrays are rejected. The CPU backend applies the
+function to the complete exact state. The current GPU target accepts only real
+integer scalar states; it rejects indexed arrays explicitly rather than
+flattening or approximating them.
+
+For repeated loading, pack readable JSON once and use the versioned binary data
+directly:
+
+```powershell
+cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- pack-data examples/batch-array-data.json data.nsb
+cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- batch examples/batch-array-program.ns --function step --data data.nsb --steps 1 --backend cpu
+```
+
+The binary file stores the same exact sparse native states and requested host
+shapes. It avoids JSON syntax parsing; no speedup is claimed without a
+benchmark. The exact lowering rule and binary layout are documented in
+[`language/ARRAY-DATA.md`](language/ARRAY-DATA.md).
+
+### Projection-relative frequency synthesis
+
+The Rust runtime can now try the deliberately lossy route directly. It runs an
+exact `.ns` source, reads a finite indexed output window, projects its exact
+coefficients to classical complex `f64`, selects frequency modes, and replays
+them. It emits a frequency program only when every replayed classical sample is
+within the requested absolute error:
+
+```powershell
+cargo run --manifest-path language/runtime/Cargo.toml --bin native-space -- frequency examples/frequency-observations.ns --samples 16 --maximum-error 1e-12
+```
+
+The supplied sixteen-sample quarter-turn pattern becomes one retained mode at
+bin 4. The report names the `classical-complex-f64` camera, the mode count, the
+requested error, the observed error, and whether replay verification passed.
+
+This establishes equality only after that classical projection and only over
+the requested finite window. It does not establish exact native-state equality
+or continuation beyond the window. Synthesis currently uses a bounded direct
+finite transform; no speedup is claimed yet. The complete design and
+performance boundary are in `language/FREQUENCY.md`.
+
+This is bounded program synthesis, not a universal shortest-program oracle.
+A finite sample does not determine a unique future. All supplied file
+observations remain available as evidence, while the searched recurrence order
+is bounded to 32. Unsupported layouts, over-budget searches, and samples with
+no shared recurrence inside the declared index-error ratio fail explicitly. In
+particular, the first 30 oriented prime observations do not pass this recurrence
+grammar; the runtime refuses to present a fitted lookup as a discovered prime
+algorithm.
+
+Both reflective forms disappear before bytecode. The generated program still
+contains only exact constants and ADD, MULTIPLY, ORIENT, and INDEX.
+
 The compiler and virtual machine are currently implemented in Rust. They are
 tested host tools, not yet a self-hosted Native Space compiler. Calling that
 finished would be stronger than the implementation currently supports.
@@ -1449,7 +1681,12 @@ subtract_right_axis(positive_axis, positive_axis)
 
 Functions can be imported, applied, nested, and used to define binary
 operators. Core operations cannot be overridden. Declaration order determines
-operator precedence. `derive` reports primitive steps and the function trace.
+operator precedence. `derive` reports a flattened external operation camera;
+`trace(function)` returns the source graph itself as a nested native state;
+`untrace(value, maximum_error_ratio)` searches the documented recurrence grammar,
+minimizes the exact held-out index-error ratio before program size, and returns the recursive
+operation strand together with its exact mismatch indexes. Omitting the second
+argument requires a zero error ratio.
 Parser and structural failures retain source locations; a failed zero check
 currently reports that its final native state is nonzero.
 
@@ -1484,8 +1721,11 @@ cargo run --manifest-path $manifest --release --bin native-space -- check exampl
 # Run the implementation evidence suite.
 cargo test --manifest-path $manifest
 
-# Build the distributable binary.
+# Build a smaller CPU-only binary.
 cargo build --manifest-path $manifest --release --bin native-space
+
+# Build the GPU-enabled binary used for official releases.
+cargo build --manifest-path language/runtime/Cargo.toml --features gpu --release --bin native-space
 ```
 
 The result is `language/runtime/target/release/native-space.exe` on Windows or
