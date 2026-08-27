@@ -108,7 +108,7 @@ of the simpler native rule
 
 $$
 (F\star G)_\gamma
-=
+\mathrel{=}
 \mathop{\boxplus}_{\alpha\oplus_I\beta=\gamma}
 F_\alpha\boxtimes G_\beta.
 $$
@@ -126,7 +126,7 @@ $$
 \mathcal D_{u,s}(f)
 :=
 \mathcal M_{u,s}(\Phi(f))
-=
+\mathrel{=}
 \mathop{\boxplus}_{n\in\mathrm{supp}(f)}
 f(n)\boxtimes\chi_{u,s}(\alpha_n).
 $$

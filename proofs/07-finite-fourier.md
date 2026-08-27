@@ -31,7 +31,7 @@ $2\pi$. This holds for $m=N$ and fails for $0<m<N$. $\square$
 $$
 \mathop{\boxplus}_{r=0}^{N-1}
 \omega_N^{\boxtimes rm}
-=
+\mathrel{=}
 \begin{cases}
 \widehat N,&N\mid m,\\
 \mathbf0,&N\nmid m.
@@ -62,7 +62,7 @@ T-OS-1. The finite sum is therefore $\mathbf0$. $\square$
 
 $$
 \mathcal C_{N,k}(F\star G)
-=
+\mathrel{=}
 (\mathcal C_{N,k}F)*_N(\mathcal C_{N,k}G).
 $$
 
@@ -127,7 +127,7 @@ $\mathcal F_N$ is real-linear. $\square$
 
 $$
 \mathcal F_N(f*_Ng)
-=
+\mathrel{=}
 \mathcal F_N(f)\boxtimes_{\mathrm{pt}}\mathcal F_N(g),
 $$
 
@@ -165,7 +165,7 @@ T-CYCLIC-1 and T-DFT-2 give
 
 $$
 \mathcal F_N\mathcal C_{N,k}(F\star G)
-=
+\mathrel{=}
 \mathcal F_N\mathcal C_{N,k}(F)
 \boxtimes_{\mathrm{pt}}
 \mathcal F_N\mathcal C_{N,k}(G).

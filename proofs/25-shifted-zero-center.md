@@ -77,7 +77,7 @@ However, the paired zeta camera gives
 
 $$
 \zeta\left(\frac{1}{2}\right)
-=
+\mathrel{=}
 \frac{
 \displaystyle\sum_{m\ge1}
 \left(

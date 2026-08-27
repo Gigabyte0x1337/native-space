@@ -17,7 +17,7 @@ let $\mathrm{DFT}_N$ use the root $e^{-2\pi i/N}$. Then
 
 $$
 \mathrm{DFT}_N(f*_Ng)
-=
+\mathrel{=}
 \mathrm{DFT}_N(f)\cdot_{\mathrm{pt}}\mathrm{DFT}_N(g).
 $$
 

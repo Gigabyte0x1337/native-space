@@ -223,7 +223,7 @@ ADD()
 For two same-facing native axes, define
 
 $$
-\mathrm{axis\_subtract}(A,B)
+\mathrm{axisSubtract}(A,B)
 :=
 A\boxplus\mathrm{ORIENT}_2(B).
 $$
@@ -237,14 +237,14 @@ The classical camera preserves ADD and maps a half-turn to multiplication by
 $-1$. Hence
 
 $$
-\kappa(\mathrm{axis\_subtract}(A,B))
+\kappa(\mathrm{axisSubtract}(A,B))
 =\kappa(A)-\kappa(B).
 $$
 
 Because the camera is injective,
 
 $$
-\mathrm{axis\_subtract}(A,B)=\mathbf0
+\mathrm{axisSubtract}(A,B)=\mathbf0
 \quad\Longleftrightarrow\quad
 A=B.
 $$

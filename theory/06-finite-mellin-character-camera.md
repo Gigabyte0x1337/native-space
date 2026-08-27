@@ -82,7 +82,7 @@ If $\kappa(s)=\sigma+i\tau$, T-FLOW-2 suggests
 
 $$
 \kappa(\chi_{u,s}(\alpha))
-=
+\mathrel{=}
 \exp\bigl(- (\sigma+i\tau)U_u(\alpha)\bigr).
 $$
 

@@ -291,7 +291,7 @@ T-ZETA-PAIR-IDENTITY-1 proves on $\mathrm{Re}(s)>1$ that
 
 $$
 \mathcal E_N(s)
-=
+\mathrel{=}
 \left(
 \mathbf1\boxminus
 \underline2\boxtimes\chi_s(\alpha_2)
@@ -385,7 +385,7 @@ The paired proofs additionally establish
 
 $$
 \kappa(\mathcal Z_N^{\mathrm{pair}}(s))
-=
+\mathrel{=}
 \frac{\sum_{m\geq1}
 \left((2m-1)^{-\kappa(s)}-(2m)^{-\kappa(s)}\right)}
 {1-2^{1-\kappa(s)}}

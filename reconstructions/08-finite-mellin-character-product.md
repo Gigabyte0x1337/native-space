@@ -16,7 +16,7 @@ let
 
 $$
 (c*d)_\gamma
-=
+\mathrel{=}
 \sum_{\alpha+\beta=\gamma}c_\alpha d_\beta,
 $$
 
@@ -24,7 +24,7 @@ and let $U(\alpha+\beta)=U(\alpha)+U(\beta)$. Then for complex $s$,
 
 $$
 \sum_\gamma(c*d)_\gamma e^{-sU(\gamma)}
-=
+\mathrel{=}
 \left(\sum_\alpha c_\alpha e^{-sU(\alpha)}\right)
 \left(\sum_\beta d_\beta e^{-sU(\beta)}\right).
 $$

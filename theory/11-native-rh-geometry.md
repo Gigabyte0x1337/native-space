@@ -32,13 +32,13 @@ names:
 $$
 \begin{aligned}
 \delta(s)
-&:=\mathrm{centered\_re\_perspective}(s)
+&:=\mathrm{centeredREPerspective}(s)
 =\mathrm{classic}_p(s)-\frac{1}{2},\\
 \Delta(s;k)
-&:=\mathrm{centered\_re\_pattern}(s;k),\\
+&:=\mathrm{centeredREPattern}(s;k),\\
 R_{\mathrm{cl}}(s;k)
-&:=\mathrm{re\_classical\_pattern}(s;k)
-=\mathrm{classical\_perspective}(\Delta(s;k)).
+&:=\mathrm{reClassicalPattern}(s;k)
+=\mathrm{classicalPerspective}(\Delta(s;k)).
 \end{aligned}
 $$
 
@@ -63,7 +63,7 @@ The direct-zeta route asks for one additional implication into this already
 proved chain:
 
 $$
-\mathrm{zeta\_classical\_pattern}(s)=0
+\mathrm{zetaClassicalPattern}(s)=0
 \Longrightarrow
 R_{\mathrm{cl}}(s;k)=0.
 $$
@@ -485,7 +485,7 @@ Applying D-AXIS-PROJ-1 to the xi value gives the exact operations-first form
 
 $$
 \mathcal F_{\mathrm{RH}}(s)
-=
+\mathrel{=}
 \left(P_{\!R}(\Xi_{\mathrm{ref}}(s)),
       P_{\!I}(\Xi_{\mathrm{ref}}(s)),
       \delta(s)\right),
@@ -810,7 +810,7 @@ multiplicative depth, or wrapped birth orientation $\mathbf J^k$.
 For two same-facing axes, subtraction is derived rather than primitive:
 
 $$
-\mathrm{axis\_subtract}(A,B)
+\mathrm{axisSubtract}(A,B)
 =A\boxplus\mathrm{ORIENT}_2(B).
 $$
 

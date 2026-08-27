@@ -27,6 +27,31 @@ fn markdown_files(directory: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
+fn text_command_contains_escaped_underscore(line: &str) -> bool {
+    const TEXT_COMMANDS: [&str; 5] = [
+        r"\mathrm{",
+        r"\mathbf{",
+        r"\mathsf{",
+        r"\text{",
+        r"\operatorname{",
+    ];
+
+    TEXT_COMMANDS.iter().any(|command| {
+        let mut remainder = line;
+        while let Some(start) = remainder.find(command) {
+            let content = &remainder[start + command.len()..];
+            let Some(end) = content.find('}') else {
+                return false;
+            };
+            if content[..end].contains(r"\_") {
+                return true;
+            }
+            remainder = &content[end + 1..];
+        }
+        false
+    })
+}
+
 #[test]
 fn every_native_space_markdown_block_is_a_complete_document() {
     let root = repository();
@@ -70,6 +95,25 @@ fn every_markdown_file_uses_supported_github_math_syntax() {
 
     for path in files {
         let document = fs::read_to_string(&path).unwrap();
+        for (zero_based_line, line) in document.lines().enumerate() {
+            let line_number = zero_based_line + 1;
+            assert_ne!(
+                line.trim(),
+                "=",
+                "standalone equals becomes a GitHub Setext heading: {}:{line_number}",
+                path.display()
+            );
+            assert!(
+                !line.trim_start().starts_with("# $$"),
+                "display math cannot be a Markdown heading: {}:{line_number}",
+                path.display()
+            );
+            assert!(
+                !text_command_contains_escaped_underscore(line),
+                "escaped source identifier is ambiguous in GitHub math: {}:{line_number}",
+                path.display()
+            );
+        }
         for unsupported in [r"\(", r"\)", r"\[", r"\]"] {
             assert!(
                 !document.contains(unsupported),

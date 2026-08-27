@@ -57,7 +57,7 @@ $$
 S_r
 :=
 \mathop{\boxplus}_k a_k\mathrm{Rel}(r,[k]_4)
-=
+\mathrel{=}
 \mathop{\boxplus}_k a_k(O_r^{-1}\boxtimes O_k)
 =O_r^{-1}\boxtimes S.
 $$

@@ -42,7 +42,7 @@ For a finite index set $S\subset\mathbb{I}_{\mathcal A}$, recall
 
 $$
 \mathcal N_S
-=
+\mathrel{=}
 \{F\in\mathcal N_{\mathcal A}:\mathrm{supp}(F)\subseteq S\}.
 $$
 

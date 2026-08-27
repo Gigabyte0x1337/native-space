@@ -72,11 +72,11 @@ The canonical vocabulary is:
 The canonical proved RE chain is
 
 $$
-\mathrm{re\_classical\_pattern}=0
+\mathrm{reClassicalPattern}=0
 \Longleftrightarrow
-\mathrm{centered\_re\_pattern}=0
+\mathrm{centeredREPattern}=0
 \Longleftrightarrow
-\mathrm{centered\_re\_perspective}=0
+\mathrm{centeredREPerspective}=0
 \Longleftrightarrow
 \mathrm{Re}(s)=\frac{1}{2}.
 $$

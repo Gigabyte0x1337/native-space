@@ -61,7 +61,7 @@ resolvent identity
 
 $$
 (z\boxplus h)^{[-1]}\boxminus z^{[-1]}
-=
+\mathrel{=}
 \boxminus\bigl((z\boxplus h)^{[-1]}
 \boxtimes h\boxtimes z^{[-1]}\bigr).
 $$

@@ -496,7 +496,7 @@ projection:
 
 $$
 \Gamma_{\mathbb{P}}(s)
-=
+\mathrel{=}
 (\mathrm{INDEX},\mathrm{MULTIPLY\ recursion},
   \mathrm{ORIENT},\mathrm{analytic\ gain}).
 $$
@@ -592,7 +592,7 @@ The paired zeta value is
 
 $$
 \zeta\left(\frac{1}{2}\right)
-=
+\mathrel{=}
 \frac{
 \displaystyle\sum_{m\ge1}
 \left(
@@ -790,7 +790,7 @@ For every native state $F$, ORIENT is exactly MULTIPLY by one of these units:
 $$
 \boxed{
 \mathrm{ORIENT}_r(F)
-=
+\mathrel{=}
 \eta\!\left(\mathbf J^{\boxtimes r}\right)\star F
 }
 $$
@@ -841,7 +841,7 @@ The native reflected-equality theorem is proved in this repository:
 
 $$
 \boxed{
-\mathrm{re\_classical\_pattern}(s;k)=0
+\mathrm{reClassicalPattern}(s;k)=0
 \quad\Longleftrightarrow\quad
 \mathrm{Re}(s)=\frac{1}{2}
 }
@@ -1108,7 +1108,7 @@ $$
 \bigoplus_k[k,v_{Z,k}]
 +
 \bigoplus_k[k,v_{R,k}]
-=
+\mathrel{=}
 \bigoplus_k[k,v_k].
 }
 $$
@@ -1190,7 +1190,7 @@ axes and zero-filling absent axes. This completes the proved chain:
 
 $$
 \boxed{
-\mathrm{re\_classical\_pattern}(s;k)=0
+\mathrm{reClassicalPattern}(s;k)=0
 \Longleftrightarrow
 g(\sigma;k)=0
 \Longleftrightarrow
@@ -1271,9 +1271,9 @@ The one-dimensional rotation theorem cannot supply RH. In the corrected richer
 source, one must prove
 
 $$
-\mathrm{zeta\_classical\_pattern}(s)=0
+\mathrm{zetaClassicalPattern}(s)=0
 \Longrightarrow
-\mathrm{re\_classical\_pattern}(s;k)=0
+\mathrm{reClassicalPattern}(s;k)=0
 $$
 
 for every nontrivial critical-strip zeta zero. Both projections must act on the

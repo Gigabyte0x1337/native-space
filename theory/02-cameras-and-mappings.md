@@ -241,7 +241,7 @@ native self-action visible:
 
 $$
 \mathrm{col}(z\boxtimes w)
-=
+\mathrel{=}
 \mu(z)
 \mathrm{col}(w).
 $$
@@ -275,7 +275,7 @@ angle $\theta_z$ satisfying
 
 $$
 (\cos\theta_z,\sin\theta_z)
-=
+\mathrel{=}
 \frac{(x,y)}{\sqrt{\nu(z)}}.
 $$
 
@@ -283,7 +283,7 @@ Then the full candidate fiber is
 
 $$
 W^{-1}(z)
-=
+\mathrel{=}
 \left\{
 \left(\tfrac{1}{2}\log\nu(z),\ \theta_z+2\pi n\right)
 :n\in\mathbb{Z}
@@ -318,7 +318,7 @@ law
 
 $$
 W(\rho,\theta)\boxtimes W(\sigma,\phi)
-=
+\mathrel{=}
 W(\rho+\sigma,\theta+\phi).
 $$
 
@@ -336,7 +336,7 @@ $$
 H:\mathbb{O}\to\mathrm{Sym}_2(\mathbb{R}),
 \qquad
 H(z):=v_zv_z^T
-=
+\mathrel{=}
 \begin{pmatrix}
 x^2&xy\\
 xy&y^2
@@ -395,7 +395,7 @@ so explicitly
 
 $$
 Q(x,y)
-=
+\mathrel{=}
 (X,Y,Z)
 :=
 (x^2-y^2,\ 2xy,\ x^2+y^2).
@@ -464,7 +464,7 @@ The fiber over $c\in\mathbb{O}$ is exactly
 
 $$
 \pi_\alpha^{-1}(c)
-=
+\mathrel{=}
 \{F\in\mathcal N_{\mathcal A}:F_\alpha=c\}.
 $$
 

@@ -28,7 +28,7 @@ addition. $\square$
 
 $$
 \chi_{u,s}(\alpha\oplus_I\beta)
-=
+\mathrel{=}
 \chi_{u,s}(\alpha)\boxtimes\chi_{u,s}(\beta).
 $$
 
@@ -36,7 +36,7 @@ Also,
 
 $$
 \chi_{u,s}(\alpha)
-=
+\mathrel{=}
 \mathop{\boxtimes}_{a_k\in\mathrm{supp}(\alpha)}
 z_k(u,s)^{\boxtimes d_k(\alpha)}.
 $$
@@ -75,7 +75,7 @@ laws. $\square$
 
 $$
 \kappa(\chi_{u,s}(\alpha))
-=
+\mathrel{=}
 e^{-(\sigma+i\tau)U_u(\alpha)}.
 $$
 

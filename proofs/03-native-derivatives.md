@@ -64,7 +64,7 @@ $S\subseteq T$, then $\|F\|_S=\|F\|_T$ for $F\in\mathcal N_S$.
 
 $$
 \|F\|_S
-=
+\mathrel{=}
 \left(
 \sum_{\alpha\in S}
 (x_\alpha^2+y_\alpha^2)
@@ -166,7 +166,7 @@ by L-NS-2. The remainder quotient is identically zero. $\square$
 
 $$
 D\mathsf{Mul}_{(F,G)}(H,K)
-=
+\mathrel{=}
 (H\star G)\oplus(F\star K).
 $$
 
@@ -242,7 +242,7 @@ and for $n\geq1$,
 
 $$
 DP_n{}_z(h)
-=
+\mathrel{=}
 \widehat n\boxtimes z^{\boxtimes(n-1)}\boxtimes h.
 $$
 
@@ -268,7 +268,7 @@ $\|h\|$ gives a limit of zero. $\square$
 
 $$
 D(\mathrm{inv})_z(h)
-=
+\mathrel{=}
 \boxminus\big(z^{[-1]}\boxtimes h\boxtimes z^{[-1]}\big).
 $$
 
@@ -277,7 +277,7 @@ field laws give the exact resolvent identity
 
 $$
 (z\boxplus h)^{[-1]}\boxminus z^{[-1]}
-=
+\mathrel{=}
 \boxminus\big((z\boxplus h)^{[-1]}\boxtimes h\boxtimes z^{[-1]}\big).
 $$
 
@@ -327,7 +327,7 @@ so the rank is two. $\square$
 
 $$
 DW_{(\rho,\theta)}(a,b)
-=
+\mathrel{=}
 e^\rho
 \big(
 a\cos\theta-b\sin\theta,
@@ -403,7 +403,7 @@ injective from a two-dimensional domain, so its rank is two. $\square$
 
 $$
 DQ_{(x,y)}(a,b)
-=
+\mathrel{=}
 (2xa-2yb,\ 2ya+2xb,\ 2xa+2yb).
 $$
 

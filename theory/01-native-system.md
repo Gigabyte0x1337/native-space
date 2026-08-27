@@ -383,7 +383,7 @@ $\varepsilon_k\in\mathbb{I}_{\mathcal A}$ by
 
 $$
 \varepsilon_k(a_j)
-=
+\mathrel{=}
 \begin{cases}
 1,&j=k,\\
 0,&j\neq k.
@@ -550,7 +550,7 @@ For single terms, the intended reduction is
 
 $$
 c[\alpha]\star d[\beta]
-=
+\mathrel{=}
 (c\boxtimes d)[\alpha\oplus_I\beta].
 $$
 

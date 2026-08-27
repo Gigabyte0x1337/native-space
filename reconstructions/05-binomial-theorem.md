@@ -22,7 +22,7 @@ For native states $F,G$, L-BIN-1 proves the more directly typed statement
 
 $$
 (F\oplus G)^{\star n}
-=
+\mathrel{=}
 \mathop{\bigoplus}_{j=0}^{n}
 \underline{{n\choose j}}
 \star F^{\star(n-j)}

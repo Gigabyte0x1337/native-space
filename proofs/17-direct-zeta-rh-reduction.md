@@ -46,11 +46,11 @@ $\zeta(s)=0$, not $\zeta(s)=1/2$.
 The proved RE side has three distinct layers:
 
 $$
-\mathrm{re\_classical\_pattern}(s;k)=0
+\mathrm{reClassicalPattern}(s;k)=0
 \Longleftrightarrow
 \Delta(s;k)=0
 \Longleftrightarrow
-\mathrm{centered\_re\_perspective}(s)=0
+\mathrm{centeredREPerspective}(s)=0
 \Longleftrightarrow
 \mathrm{Re}(s)=\frac{1}{2}.
 $$

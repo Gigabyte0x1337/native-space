@@ -154,7 +154,7 @@ Likewise,
 
 $$
 \mu(z)\mathrm{col}(w)
-=
+\mathrel{=}
 \begin{pmatrix}xu-yv\\yu+xv\end{pmatrix}
 =operatorname{col}(z\boxtimes w).
 $$
@@ -177,7 +177,7 @@ fiber is exactly
 
 $$
 W^{-1}(z)
-=
+\mathrel{=}
 \left\{
 \left(\tfrac{1}{2}\log\nu(z),\theta_z+2\pi n\right):n\in\mathbb{Z}
 \right\}.
@@ -587,7 +587,7 @@ native states; specifically,
 
 $$
 \mathrm{ev}_z(\mathsf X_k)
-=
+\mathrel{=}
 \mathrm{ev}_z(\eta(z_k)).
 $$
 

@@ -48,7 +48,7 @@ $n\in\mathbb{N}_0$,
 
 $$
 (F\oplus G)^{\star n}
-=
+\mathrel{=}
 \mathop{\bigoplus}_{j=0}^{n}
 \underline{{n\choose j}}
 \star F^{\star(n-j)}
@@ -59,7 +59,7 @@ For all $z,w\in\mathbb{O}$, the corresponding scalar identity is
 
 $$
 (z\boxplus w)^{\boxtimes n}
-=
+\mathrel{=}
 \mathop{\boxplus}_{j=0}^{n}
 \widehat{{n\choose j}}
 \boxtimes z^{\boxtimes(n-j)}
@@ -98,7 +98,7 @@ $F^{\star(n+1-k)}\star G^{\star k}$ receives coefficient
 $$
 \underline{{n\choose k}}\oplus
 \underline{{n\choose k-1}}
-=
+\mathrel{=}
 \underline{{n+1\choose k}}
 $$
 

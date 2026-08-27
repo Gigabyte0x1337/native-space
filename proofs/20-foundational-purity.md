@@ -50,7 +50,7 @@ $x^2+y^2>0$. Hence
 
 $$
 (x,y)^{-1}
-=
+\mathrel{=}
 \left(\frac{x}{x^2+y^2},\frac{-y}{x^2+y^2}\right)
 $$
 

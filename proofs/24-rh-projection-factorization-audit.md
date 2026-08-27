@@ -80,7 +80,7 @@ of the form
 
 $$
 \Gamma_{\mathbb{P}}(s)
-=
+\mathrel{=}
 (\mathrm{INDEX},\mathrm{MULTIPLY\ recursion},
   \mathrm{ORIENT},\mathrm{analytic\ gain}).
 $$

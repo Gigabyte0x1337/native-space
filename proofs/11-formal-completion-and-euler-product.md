@@ -110,9 +110,9 @@ $\square$
 
 $$
 \mathfrak Z_\mathrm{pattern}
-=
+\mathrel{=}
 \prod_{k\geq1}^{\mathrm{coeff}}\mathsf G_k
-=
+\mathrel{=}
 \prod_{k\geq1}^{\mathrm{coeff}}
 (\mathsf1\widehat\boxminus\mathsf X_k)^{-1}.
 $$

@@ -28,7 +28,7 @@ nonzero and has a native multiplicative inverse. Therefore
 
 $$
 F_\alpha
-=
+\mathrel{=}
 \big(F_\alpha\boxtimes\chi_s(\alpha)\big)
 \boxtimes\chi_s(\alpha)^{[-1]}.
 $$
@@ -56,7 +56,7 @@ and
 
 $$
 \widehat{\mathcal M}_{\chi}(F\widehat\star G)
-=
+\mathrel{=}
 \widehat{\mathcal M}_{\chi}(F)
 \boxtimes
 \widehat{\mathcal M}_{\chi}(G).
@@ -220,7 +220,7 @@ positive observation input $k$, $(\mathsf G_k,\chi_s)$ is absolutely summable an
 
 $$
 \widehat{\mathcal M}_{\chi_s}(\mathsf G_k)
-=
+\mathrel{=}
 \left(\mathbf1\boxminus\chi_s(\varepsilon_k)\right)^{\boxtimes-1}.
 $$
 
@@ -249,7 +249,7 @@ Equivalently, in conventional coordinates,
 
 $$
 \sum_{n=1}^{\infty}n^{-\kappa(s)}
-=
+\mathrel{=}
 \prod_{k=1}^{\infty}(1-p(k)^{-\kappa(s)})^{-1}.
 $$
 
@@ -323,7 +323,7 @@ $\kappa(\mathcal E_N(s))$. $\square$
 
 $$
 \mathcal E_N(s)
-=
+\mathrel{=}
 \left(
 \mathbf1\boxminus\underline2\boxtimes\chi_s(\alpha_2)
 \right)
@@ -374,7 +374,7 @@ It therefore cannot equal $1$, whose modulus is $1$. $\square$
 
 $$
 \mathcal Z_N^{\mathrm{pair}}(s)
-=
+\mathrel{=}
 \mathcal E_N(s)\boxtimes
 \left(
 \mathbf1\boxminus\underline2\boxtimes\chi_s(\alpha_2)

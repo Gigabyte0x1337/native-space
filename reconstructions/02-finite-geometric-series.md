@@ -95,7 +95,7 @@ $$
 (\mathbf1\boxplus(\boxminus z))
 \boxtimes
 \mathop{\boxplus}_{j=0}^{n-1}z^{\boxtimes j}
-=
+\mathrel{=}
 \mathbf1\boxplus(\boxminus z^{\boxtimes n}).
 $$
 

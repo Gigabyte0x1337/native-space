@@ -275,7 +275,7 @@ prime model is used. $\square$
 
 $$
 \mathrm{orient}_{r+s}
-=
+\mathrel{=}
 \mathrm{orient}_r\circ\mathrm{orient}_s,
 $$
 
@@ -286,7 +286,7 @@ where the subscript sum is reduced modulo four.
 $$
 \mathbf J^{\boxtimes r}\boxtimes
 \mathbf J^{\boxtimes s}
-=
+\mathrel{=}
 \mathbf J^{\boxtimes(r+s)}
 $$
 
@@ -369,7 +369,7 @@ $z_1,\ldots,z_n$,
 $$
 \mathrm{View}_r
 \left(\boxplus_{j=1}^{n}z_j\right)
-=
+\mathrel{=}
 \boxplus_{j=1}^{n}\mathrm{View}_r(z_j),
 $$
 
@@ -578,7 +578,7 @@ Natural addition is commutative. $\square$
 
 $$
 \mathrm{depth}(\alpha\oplus_I\beta)
-=
+\mathrel{=}
 \mathrm{depth}(\alpha)+\mathrm{depth}(\beta).
 $$
 
@@ -698,7 +698,7 @@ and distributing finite coefficient sums using L-OS-5 gives
 
 $$
 ((F\star G)\star H)_\delta
-=
+\mathrel{=}
 \mathop{\boxplus}_{(\alpha\oplus_I\beta)\oplus_I\gamma=\delta}
 (F_\alpha\boxtimes G_\beta)\boxtimes H_\gamma.
 $$
@@ -707,7 +707,7 @@ Similarly,
 
 $$
 (F\star(G\star H))_\delta
-=
+\mathrel{=}
 \mathop{\boxplus}_{\alpha\oplus_I(\beta\oplus_I\gamma)=\delta}
 F_\alpha\boxtimes(G_\beta\boxtimes H_\gamma).
 $$
@@ -833,7 +833,7 @@ Thus only depth $k$ increases. $\square$
 
 $$
 \mathrm{ORIENT}_r(F)
-=
+\mathrel{=}
 \eta(\mathbf J^{\boxtimes r})\star F.
 $$
 
@@ -844,7 +844,7 @@ its product with each term is
 $$
 (\mathbf J^{\boxtimes r}\boxtimes F_\alpha)
 [\mathbf0_I\oplus_I\alpha]
-=
+\mathrel{=}
 \mathrm{orient}_r(F_\alpha)[\alpha].
 $$
 
@@ -856,7 +856,7 @@ Collecting the finite terms gives exactly D-NS-8. $\square$
 
 $$
 \mathrm{ORIENT}_r(\mathrm{INDEX}_k(F))
-=
+\mathrel{=}
 \mathrm{INDEX}_k(\mathrm{ORIENT}_r(F)).
 $$
 
