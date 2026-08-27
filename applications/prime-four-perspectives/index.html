@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Native Space — prime births through four cameras</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #050b12;
+        color: #eef6ff;
+      }
+
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        min-height: 100vh;
+        overflow: auto;
+        background:
+          radial-gradient(circle at 50% 0%, rgba(28, 65, 96, 0.24), transparent 42rem),
+          #050b12;
+      }
+
+      .shell {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        gap: 12px;
+        min-height: 100vh;
+        padding: 18px;
+      }
+
+      header {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 24px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.35rem, 2.2vw, 2.25rem);
+        font-weight: 500;
+        letter-spacing: -0.035em;
+      }
+
+      .subtitle {
+        margin: 5px 0 0;
+        color: #91a6ba;
+        font-size: 0.86rem;
+      }
+
+      .index-control {
+        display: flex;
+        align-items: safe center;
+        flex-wrap: wrap;
+        gap: 7px 10px;
+        margin-block-start: 9px;
+        color: #9db0c2;
+        font-size: 0.72rem;
+      }
+      .index-control label { color: #dce8f2; }
+      .index-control output {
+        min-inline-size: 105px;
+        color: #7ef7c6;
+        font-variant-numeric: tabular-nums;
+      }
+      .index-control input[type="range"] { inline-size: min(210px, 48vw); }
+      .index-control button {
+        border: 1px solid #597086;
+        border-radius: 3px;
+        padding: 4px 8px;
+        background: #0b1825;
+        color: #dce8f2;
+        font: inherit;
+        cursor: pointer;
+      }
+      .index-control button:focus-visible {
+        outline: 2px solid #7ef7c6;
+        outline-offset: 2px;
+      }
+      .readout-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-block-size: 28px;
+      }
+      .readout-toggle input { accent-color: #59d9ff; }
+      .readout-toggle input:focus-visible {
+        outline: 2px solid #7ef7c6;
+        outline-offset: 2px;
+      }
+
+      .metrics {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: end;
+        gap: 18px;
+        margin: 0;
+      }
+
+      .metric { min-width: 92px; }
+      .metric dt {
+        color: #7890a7;
+        font-size: 0.68rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .metric dd {
+        margin: 3px 0 0;
+        font-variant-numeric: tabular-nums;
+        font-size: 0.95rem;
+      }
+
+      #prime-stage {
+        position: relative;
+        min-height: 0;
+        overflow: hidden;
+        border: 1px solid rgba(137, 174, 208, 0.18);
+        background: #07111d;
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
+        touch-action: none;
+        cursor: grab;
+      }
+
+      .visual-stack {
+        display: grid;
+        grid-template-rows: minmax(480px, 56dvh) 180px auto;
+        gap: 8px;
+        min-height: 0;
+      }
+      .visual-stack.readouts-hidden {
+        grid-template-rows: minmax(480px, 56dvh) auto;
+      }
+
+      #prime-stage:active { cursor: grabbing; }
+      #prime-canvas { display: block; width: 100%; height: 100%; }
+
+      .view-grid {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-rows: repeat(2, minmax(0, 1fr));
+        pointer-events: none;
+      }
+
+      .view {
+        position: relative;
+        border-color: rgba(137, 174, 208, 0.14);
+        border-style: solid;
+        border-width: 0;
+      }
+      .view:nth-child(1), .view:nth-child(3) { border-right-width: 1px; }
+      .view:nth-child(1), .view:nth-child(2) { border-bottom-width: 1px; }
+
+      .view-label {
+        position: absolute;
+        top: 14px;
+        left: 16px;
+        display: flex;
+        align-items: baseline;
+        gap: 9px;
+      }
+
+      .view-symbol {
+        color: #f7fbff;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 1.55rem;
+      }
+      .view-copy {
+        color: #8299ae;
+        font-size: 0.7rem;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+
+      #loading-state, #error-output {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        translate: -50% -50%;
+        z-index: 2;
+        padding: 10px 14px;
+        background: rgba(4, 10, 17, 0.84);
+        color: #c5d4e1;
+        font-size: 0.82rem;
+        letter-spacing: 0.04em;
+        pointer-events: none;
+      }
+      #error-output { color: #ff9ba9; }
+
+      .index-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        min-height: 0;
+      }
+
+      .index-readout {
+        min-width: 0;
+        padding: 9px 12px 7px;
+        overflow: hidden;
+        border: 1px solid rgba(137, 174, 208, 0.15);
+        background: rgba(7, 17, 29, 0.8);
+      }
+
+      .index-heading {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .index-readout h2 {
+        margin: 0;
+        color: #edf6ff;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 1rem;
+        font-weight: 500;
+      }
+
+      .index-note {
+        color: #718aa1;
+        font-size: 0.65rem;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+
+      .index-readout svg { display: block; width: 100%; height: 142px; }
+      .index-readout .axis { stroke: #7891a8; stroke-width: 1.25; }
+      .index-readout .lane { stroke: #3f5366; stroke-width: 1; stroke-dasharray: 2 4; }
+      .index-readout .coordinate { fill: #c5d4e1; font-size: 10px; }
+      .index-readout .index-label { fill: #8198ad; font-size: 9px; letter-spacing: 0.08em; }
+      .index-readout .braid-path { fill: none; stroke-width: 1.65; stroke-linejoin: round; }
+      .index-readout .track-0 { stroke: #59d9ff; }
+      .index-readout .track-1 { stroke: #ff5ebc; }
+      .index-readout .track-2 { stroke: #ffc95c; }
+
+      .classical-check {
+        min-width: 0;
+        padding: 13px 14px 14px;
+        border: 1px solid rgba(137, 174, 208, 0.18);
+        background: rgba(7, 17, 29, 0.88);
+      }
+      .check-heading {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 6px 18px;
+        margin-block-end: 10px;
+      }
+      .check-heading h2 {
+        margin: 0;
+        color: #edf6ff;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 1.05rem;
+        font-weight: 500;
+      }
+      .check-heading p {
+        margin: 0;
+        color: #8198ad;
+        font-size: 0.7rem;
+      }
+      .classical-plane-scroll {
+        max-inline-size: 100%;
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        scrollbar-gutter: stable;
+      }
+      .classical-plane {
+        display: block;
+        width: 100%;
+        min-width: 1050px;
+        height: auto;
+      }
+      .classical-plane .lane {
+        stroke: #42586b;
+        stroke-width: 1;
+        stroke-dasharray: 3 4;
+      }
+      .classical-plane .prime-guide { stroke: #263b4d; stroke-width: 0.65; }
+      .classical-plane .plane-label { fill: #c5d4e1; font-size: 11px; }
+      .classical-plane .plane-prime { fill: #eef6ff; font-size: 9px; font-weight: 600; }
+      .classical-plane .plane-index { fill: #7890a7; font-size: 9px; }
+      .classical-plane .braid-path { fill: none; stroke-width: 1.8; stroke-linejoin: round; }
+      .classical-plane .braid-point { stroke: #07111d; stroke-width: 0.8; }
+      .classical-plane .track-0 { stroke: #59d9ff; }
+      .classical-plane .track-1 { stroke: #ff5ebc; }
+      .classical-plane .track-2 { stroke: #ffc95c; }
+      .classical-plane .braid-point.track-0 { fill: #59d9ff; }
+      .classical-plane .braid-point.track-1 { fill: #ff5ebc; }
+      .classical-plane .braid-point.track-2 { fill: #ffc95c; }
+
+      .visually-hidden:where(:not(:focus-within, :active)) {
+        position: absolute !important;
+        clip-path: inset(50%) !important;
+        overflow: hidden !important;
+        width: 1px !important;
+        height: 1px !important;
+        margin: -1px !important;
+        padding: 0 !important;
+        border: 0 !important;
+        white-space: nowrap !important;
+      }
+
+      footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        color: #8297aa;
+        font-size: 0.78rem;
+      }
+
+      .cycle {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        white-space: nowrap;
+      }
+      .cycle strong { color: #dce8f2; font-weight: 500; }
+      .j { color: #59d9ff; }
+      .minus-one { color: #ff5ebc; }
+      .minus-j { color: #ffc95c; }
+      .one { color: #7ef7c6; }
+      .method { text-align: right; }
+
+      @media (max-width: 760px) {
+        .shell { height: auto; min-height: 100vh; padding: 12px; }
+        header, footer { align-items: start; flex-direction: column; }
+        .metrics { justify-content: start; }
+        .visual-stack { grid-template-rows: 720px auto auto; }
+        .visual-stack.readouts-hidden { grid-template-rows: 720px auto; }
+        #prime-stage { min-height: 720px; }
+        .view-grid { grid-template-columns: 1fr; grid-template-rows: repeat(4, minmax(0, 1fr)); }
+        .view { border-width: 0 0 1px; }
+        .view:last-child { border-bottom-width: 0; }
+        .index-grid { grid-template-columns: 1fr; }
+        .index-readout { min-height: 178px; }
+        .visual-stack.readouts-hidden .view-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-template-rows: repeat(2, minmax(0, 1fr));
+        }
+        .visual-stack.readouts-hidden .view { border-width: 0; }
+        .visual-stack.readouts-hidden .view:nth-child(1),
+        .visual-stack.readouts-hidden .view:nth-child(3) { border-right-width: 1px; }
+        .visual-stack.readouts-hidden .view:nth-child(1),
+        .visual-stack.readouts-hidden .view:nth-child(2) { border-bottom-width: 1px; }
+        .visual-stack.readouts-hidden .classical-plane { min-width: 0; }
+        .method { text-align: left; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <div>
+          <h1>One prime pattern · four coordinate cameras</h1>
+          <p class="subtitle">Every line retains prime birth INDEX through the Native, Classical, Zeta, and RE cameras.</p>
+          <div class="index-control">
+            <label for="index-start">INDEX window start</label>
+            <input id="index-start" type="range" min="1" max="999985" step="4" value="1">
+            <output id="index-window-output" for="index-start">k=1…16</output>
+            <button id="full-index-view" type="button" aria-pressed="false">Show full million</button>
+            <span class="readout-toggle">
+              <input id="show-index-readouts" name="show-index-readouts" type="checkbox" aria-controls="indexed-readouts">
+              <label for="show-index-readouts">Show 3 indexed readouts</label>
+            </span>
+          </div>
+        </div>
+        <dl class="metrics" aria-live="polite">
+          <div class="metric"><dt>Births</dt><dd id="iteration-count">—</dd></div>
+          <div class="metric"><dt>Camera vertices</dt><dd id="vertex-count">—</dd></div>
+          <div class="metric"><dt>Braid vertices</dt><dd id="braid-vertex-count">—</dd></div>
+          <div class="metric"><dt>p(1,000,000)</dt><dd id="last-prime">—</dd></div>
+          <div class="metric"><dt>Generated</dt><dd id="elapsed-time">—</dd></div>
+        </dl>
+      </header>
+
+      <main class="visual-stack">
+        <div id="prime-stage">
+          <canvas
+            id="prime-canvas"
+            role="img"
+            aria-label="One million prime births rendered through the Native, Classical, Zeta, and reflected-equality coordinate cameras."
+          ></canvas>
+          <div class="view-grid" aria-hidden="true">
+            <section class="view"><div class="view-label"><span class="view-symbol">Native</span><span class="view-copy">B<sub>r</sub>(k) in full 3D</span></div></section>
+            <section class="view"><div class="view-label"><span class="view-symbol">Classical</span><span class="view-copy">κ(J<sup>k</sup>) = i<sup>k</sup> · both axes retained</span></div></section>
+            <section class="view"><div class="view-label"><span class="view-symbol">Zeta</span><span class="view-copy">P<sub>Z</sub>B<sub>r</sub>(k) · +45° plane</span></div></section>
+            <section class="view"><div class="view-label"><span class="view-symbol">RE</span><span class="view-copy">P<sub>R</sub>B<sub>r</sub>(k) · −45° plane</span></div></section>
+          </div>
+          <div id="loading-state">Generating 1,000,000 prime births…</div>
+          <div id="error-output" role="alert" hidden></div>
+        </div>
+
+        <section id="indexed-readouts" class="index-grid" aria-label="Three indexed prime-braid camera readouts">
+          <article class="index-readout">
+            <div class="index-heading"><h2>Classical indexed braid</h2><span class="index-note">3 exact tracks</span></div>
+            <svg viewBox="0 0 320 132" role="img" aria-labelledby="classical-braid-title classical-braid-description">
+              <title id="classical-braid-title">Classical prime braid with INDEX</title>
+              <desc id="classical-braid-description">The selected sixteen exact indexed vertices of three tracks. The horizontal lanes are i, one, minus i, and minus one. INDEX increases upward.</desc>
+              <line class="axis" x1="40" y1="12" x2="40" y2="113"/>
+              <text class="index-label" data-index-window-end x="5" y="18">k=16</text><text class="index-label" data-index-window-start x="12" y="112">k=1</text>
+              <text class="index-label" transform="translate(9 78) rotate(-90)">INDEX k</text>
+              <g aria-hidden="true">
+                <line class="lane" x1="58" y1="15" x2="58" y2="110"/><text class="coordinate" text-anchor="middle" x="58" y="128">i</text>
+                <line class="lane" x1="139.33" y1="15" x2="139.33" y2="110"/><text class="coordinate" text-anchor="middle" x="139.33" y="128">1</text>
+                <line class="lane" x1="220.67" y1="15" x2="220.67" y2="110"/><text class="coordinate" text-anchor="middle" x="220.67" y="128">−i</text>
+                <line class="lane" x1="302" y1="15" x2="302" y2="110"/><text class="coordinate" text-anchor="end" x="302" y="128">−1</text>
+              </g>
+              <g id="classical-index-braids" aria-hidden="true"></g>
+            </svg>
+          </article>
+
+          <article class="index-readout">
+            <div class="index-heading"><h2>Zeta indexed braid</h2><span class="index-note">3 tracks · +45°</span></div>
+            <svg viewBox="0 0 320 132" role="img" aria-labelledby="zeta-braid-title zeta-braid-description">
+              <title id="zeta-braid-title">Zeta camera prime braid with INDEX</title>
+              <desc id="zeta-braid-description">The selected sixteen exact indexed vertices of three tracks after the zeta projection. The two horizontal lanes are minus one half and plus one half. INDEX increases upward.</desc>
+              <line class="axis" x1="40" y1="12" x2="40" y2="113"/>
+              <text class="index-label" data-index-window-end x="5" y="18">k=16</text><text class="index-label" data-index-window-start x="12" y="112">k=1</text>
+              <text class="index-label" transform="translate(9 78) rotate(-90)">INDEX k</text>
+              <g aria-hidden="true">
+                <line class="lane" x1="58" y1="15" x2="58" y2="110"/><text class="coordinate" x="58" y="128">−1/2</text>
+                <line class="lane" x1="302" y1="15" x2="302" y2="110"/><text class="coordinate" text-anchor="end" x="302" y="128">+1/2</text>
+              </g>
+              <g id="zeta-index-braids" aria-hidden="true"></g>
+            </svg>
+          </article>
+
+          <article class="index-readout">
+            <div class="index-heading"><h2>RE indexed braid</h2><span class="index-note">3 tracks · −45°</span></div>
+            <svg viewBox="0 0 320 132" role="img" aria-labelledby="re-braid-title re-braid-description">
+              <title id="re-braid-title">RE camera prime braid with INDEX</title>
+              <desc id="re-braid-description">The selected sixteen exact indexed vertices of three tracks after the RE projection. The two horizontal lanes are minus one half and plus one half. INDEX increases upward.</desc>
+              <line class="axis" x1="40" y1="12" x2="40" y2="113"/>
+              <text class="index-label" data-index-window-end x="5" y="18">k=16</text><text class="index-label" data-index-window-start x="12" y="112">k=1</text>
+              <text class="index-label" transform="translate(9 78) rotate(-90)">INDEX k</text>
+              <g aria-hidden="true">
+                <line class="lane" x1="58" y1="15" x2="58" y2="110"/><text class="coordinate" x="58" y="128">−1/2</text>
+                <line class="lane" x1="302" y1="15" x2="302" y2="110"/><text class="coordinate" text-anchor="end" x="302" y="128">+1/2</text>
+              </g>
+              <g id="re-index-braids" aria-hidden="true"></g>
+            </svg>
+          </article>
+
+          <div class="visually-hidden">
+            <table>
+              <caption>Exact four-phase camera mapping repeated by each indexed braid track</caption>
+              <thead><tr><th scope="col">Classical orientation</th><th scope="col">Zeta lane</th><th scope="col">RE lane</th></tr></thead>
+              <tbody>
+                <tr><td>i</td><td>plus one half</td><td>minus one half</td></tr>
+                <tr><td>one</td><td>plus one half</td><td>plus one half</td></tr>
+                <tr><td>minus i</td><td>minus one half</td><td>plus one half</td></tr>
+                <tr><td>minus one</td><td>minus one half</td><td>minus one half</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="classical-check">
+          <div class="check-heading">
+            <h2>Classical check · first 30 primes</h2>
+            <p><strong>INDEX 1…30</strong> runs left-to-right · <strong>p(k)</strong> is above · the three lines are the 2D Classical plane view of the 3D braid.</p>
+          </div>
+          <div class="classical-plane-scroll">
+            <svg class="classical-plane" viewBox="0 0 1120 220" role="img" aria-labelledby="classical-thirty-title classical-thirty-description">
+              <title id="classical-thirty-title">The first thirty primes in the Classical two-dimensional braid plane</title>
+              <desc id="classical-thirty-description">Prime birth index runs horizontally from one through thirty. Prime values appear above their indices. Three colored braid tracks move between the Classical orientation lanes i, one, minus i, and minus one.</desc>
+              <g aria-hidden="true">
+                <line class="lane" x1="60" y1="52" x2="1096" y2="52"/><text class="plane-label" x="16" y="56">i</text>
+                <line class="lane" x1="60" y1="89" x2="1096" y2="89"/><text class="plane-label" x="16" y="93">1</text>
+                <line class="lane" x1="60" y1="126" x2="1096" y2="126"/><text class="plane-label" x="16" y="130">−i</text>
+                <line class="lane" x1="60" y1="163" x2="1096" y2="163"/><text class="plane-label" x="16" y="167">−1</text>
+                <text class="plane-label" x="16" y="20">p(k)</text>
+                <text class="plane-label" x="16" y="207">INDEX</text>
+              </g>
+              <g id="classical-thirty-grid" aria-hidden="true"></g>
+              <g id="classical-thirty-braids" aria-hidden="true"></g>
+            </svg>
+          </div>
+          <div class="visually-hidden">
+            <table>
+              <caption>First thirty Classical prime births</caption>
+              <thead><tr><th scope="col">INDEX k</th><th scope="col">Prime p(k)</th><th scope="col">Classical orientation</th></tr></thead>
+              <tbody id="classical-thirty-table-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <div class="cycle" aria-label="Camera reconstruction identity">
+          <strong>Source reconstruction</strong>
+          <span class="j">P<sub>Z</sub>v</span><span>+</span>
+          <span class="minus-one">P<sub>R</sub>v</span><span>=</span>
+          <span class="one">v</span>
+        </div>
+        <div class="method">INDEX k is vertical · every upper line contains all 1,000,000 births · all views expose the selected 16-index window</div>
+      </footer>
+    </div>
+    <script type="module" src="./main.mjs"></script>
+  </body>
+</html>

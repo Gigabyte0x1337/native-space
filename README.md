@@ -320,6 +320,12 @@ k
 \qquad r\in\{0,1,2\}.
 $$
 
+![One million indexed prime births shown through the Native, Classical, Zeta, and RE cameras, with the first 30 classical primes below.](applications/prime-four-perspectives/prime-four-cameras.png)
+
+*One generated prime pattern through four coordinate cameras. Every upper
+strand retains all 1,000,000 birth indices; the lower panel checks the first
+30 classical prime values.*
+
 Here `k` is the prime birth identity and `r` says which strand we are
 following. The label `r` never changes, so the three histories remain
 distinguishable. Increasing `k` applies one quarter turn to all three strands.

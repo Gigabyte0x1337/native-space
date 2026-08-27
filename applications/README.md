@@ -89,3 +89,4 @@ versioned and its round-trip or approximation error is tested.
 - [Protein folding and molecular dynamics](05-protein-folding-and-md.md)
 - [Impact ladder and portfolio gates](06-impact-and-priorities.md)
 - [Programming-language path](07-programming-language.md)
+- [One-million-prime four-perspective simulation](08-prime-four-perspective-simulation.md)
