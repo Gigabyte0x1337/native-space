@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# One exact finite 2D incompressible Navier-Stokes Fourier triad.
+#
+# Directions 2 and 3 hold the two vector coordinates. The selected wavevectors
+# satisfy p + q = k. Their velocity amplitudes are perpendicular to their own
+# wavevectors, so the source modes are divergence-free.
+
+let plane = (x, y) => add(index(2, x), index(3, y))
+let x = (value) => camera(2, 0, value)
+let y = (value) => camera(3, 0, value)
+
+let dot = (left, right) =>
+add(multiply(x(left), x(right)), multiply(y(left), y(right)))
+
+let scale = (coefficient, value) =>
+plane(multiply(coefficient, x(value)), multiply(coefficient, y(value)))
+
+let subtract = (left, right) => add(left, orient(2, right))
+
+let leray = (wavevector, inverse_squared_size, value) =>
+subtract(
+  value,
+  scale(multiply(inverse_squared_size, dot(wavevector, value)), wavevector)
+)
+
+# p = (1,0), q = (1,1), and k = p+q = (2,1).
+let p = plane(1, 0)
+let q = plane(1, 1)
+let k = plane(2, 1)
+
+# u_p = (0,2) and u_q = (3,-3) are perpendicular to p and q.
+let u_p = plane(0, 2)
+let u_q = plane(3, orient(2, 3))
+
+# The target velocity u_k = (4,-8) is perpendicular to k.
+let u_k = plane(4, orient(2, 8))
+
+# Ordinary ordered quadratic interaction for the selected p+q=k pair:
+# (u_p dot q)u_q + (u_q dot p)u_p.
+let ordinary_interaction =
+add(scale(dot(u_p, q), u_q), scale(dot(u_q, p), u_p))
+
+# Both ordered paths share the native multiplication coefficient 2*3 = 6.
+# For these exact modes their summed interaction is the vector (6,0).
+let multiplication_coefficient = multiply(2, 3)
+let contracted_interaction = plane(multiplication_coefficient, 0)
+
+# P_k(value) = value - k*(k dot value)/|k|^2, with |k|^2 = 5.
+let projected_interaction = leray(k, 1/5, contracted_interaction)
+
+# One Fourier-space mode derivative:
+# -i*P_k(interaction) - viscosity*|k|^2*u_k, with viscosity = 1/10.
+let nonlinear_derivative = orient(3, projected_interaction)
+let viscous_coefficient = orient(2, multiply(1/10, 5))
+let viscous_derivative = scale(viscous_coefficient, u_k)
+let mode_derivative = add(nonlinear_derivative, viscous_derivative)
+
+# Distinct proof directions prevent one residual from cancelling another.
+# Zero simultaneously proves:
+# - every input velocity is divergence-free;
+# - the shared coefficient is exactly 6;
+# - ordinary and coefficient-contracted interactions are equal;
+# - the pressure projection is divergence-free;
+# - the complete nonlinear-plus-viscous derivative is divergence-free.
+add(
+  index(100, dot(p, u_p)),
+  index(101, dot(q, u_q)),
+  index(102, dot(k, u_k)),
+  index(103, add(multiplication_coefficient, orient(2, 6))),
+  index(104, add(ordinary_interaction, orient(2, contracted_interaction))),
+  index(105, dot(k, projected_interaction)),
+  index(106, dot(k, mode_derivative))
+) = 0

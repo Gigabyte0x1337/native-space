@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use crate::core::{
     Diagnostic, LanguageError, MultiIndex, NativeScalar, NativeState, OutputKind, Program,
-    unary_function,
+    exact_function, unary_function,
 };
 
 const BINARY_MAGIC: &[u8; 8] = b"NSBATCH\0";
@@ -183,6 +183,28 @@ pub fn execute_cpu(
         }
     }
     Ok(results)
+}
+
+/// Apply one source-defined function to the complete ordered data set.
+///
+/// Every root data item becomes one exact argument in file order. A variadic
+/// source function can therefore consume the complete finite observation pack
+/// without the host assigning model-specific meaning to any item.
+///
+/// # Errors
+///
+/// Returns the first source-function validation or evaluation diagnostic.
+pub fn execute_together(
+    program: &Program,
+    function_name: &str,
+    inputs: &[DataPoint],
+) -> Result<NativeState, LanguageError> {
+    let function = exact_function(program, function_name)?;
+    let arguments = inputs
+        .iter()
+        .map(|input| input.state.clone())
+        .collect::<Vec<_>>();
+    function.apply(&arguments)
 }
 
 /// Create the stable JSON output for one batch run.
@@ -729,5 +751,25 @@ mod tests {
         let mut trailing = encode_binary(&inputs).unwrap();
         trailing.push(0);
         decode_binary(&trailing).unwrap_err();
+    }
+
+    #[test]
+    fn complete_data_pack_is_passed_to_one_variadic_source_function() {
+        let program = parse(
+            "let sum = (left, right) => add(left, right)\n\
+             let train = (observations...) => fold(sum, zero, observations...)\n\
+             output zero",
+            "data-program.ns",
+        )
+        .unwrap();
+        let inputs = ["1", "2", "3"].map(|value| DataPoint {
+            state: NativeState::scalar(NativeScalar::from_text(value, "0").unwrap()),
+            shape: None,
+        });
+
+        assert_eq!(
+            execute_together(&program, "train", &inputs).unwrap(),
+            NativeState::scalar(NativeScalar::from_text("6", "0").unwrap())
+        );
     }
 }

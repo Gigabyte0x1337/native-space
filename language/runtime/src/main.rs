@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 use mimalloc::MiMalloc;
 use native_space_language::expansion::{derive, format_report, relativize_paths};
-use native_space_language::{Document, compile, inspect, load_document};
+use native_space_language::{Document, compile, expand_source, inspect, load_document};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -26,11 +26,21 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Parse and evaluate an exact state document.
-    Run { file: String },
+    Run {
+        file: String,
+        /// Pass every ordered data item to one selected source function.
+        #[arg(long, requires = "function")]
+        data: Option<String>,
+        /// Source function receiving the complete finite data pack.
+        #[arg(long, requires = "data")]
+        function: Option<String>,
+    },
     /// Parse and verify a state or proof document.
     Check { file: String },
     /// Print the schema-1 document representation.
     Inspect { file: String },
+    /// Print the generated pure source after transparent elaboration.
+    Expand { file: String },
     /// Compile to schema-1 bytecode or a recomputable proof certificate.
     Compile { file: String },
     /// Synthesize a verified program for one classical complex projection.
@@ -47,11 +57,11 @@ enum Command {
         #[arg(long, default_value = "1e-12")]
         maximum_error: String,
     },
-    /// Synthesize the smallest supported continuation from indexed observations.
+    /// Discover an exact deterministic or relationship-frequency pattern.
     Untrace {
-        /// Maximum exact ratio of held-out observation indexes allowed to disagree.
-        #[arg(long, default_value = "0")]
-        maximum_error_ratio: String,
+        /// Exact relationship rank; one retains every discovered channel.
+        #[arg(long, default_value = "1")]
+        rank: String,
         /// Existing exact-state observation document.
         #[arg(required_unless_present = "input")]
         file: Option<String>,
@@ -61,6 +71,33 @@ enum Command {
         /// Generated source or the exact operation pattern as CSV.
         #[arg(long, value_enum, default_value_t = UntraceOutput::Source)]
         output: UntraceOutput,
+    },
+    /// Search lower relationship ranks under an exact or declared lossy policy.
+    RankDescent {
+        /// Rank-one reference rows; defaults to the supplied observation count.
+        #[arg(long)]
+        rows: Option<usize>,
+        /// Adaptive search, every positive linear step, or one static target.
+        #[arg(long, value_enum, default_value_t = RankDescentStrategy::Adaptive)]
+        strategy: RankDescentStrategy,
+        /// Exact decrement for linear search; defaults to one quarter.
+        #[arg(long)]
+        step: Option<String>,
+        /// Exact retained-channel fraction for static search.
+        #[arg(long)]
+        rank: Option<String>,
+        /// Exact required row agreement for static search; defaults to one.
+        #[arg(long)]
+        minimum_agreement: Option<String>,
+        /// Existing exact-state observation document.
+        #[arg(required_unless_present = "input")]
+        file: Option<String>,
+        /// Ordered JSON/NSBATCH states or scalar CSV.
+        #[arg(long, conflicts_with = "file")]
+        input: Option<String>,
+        /// Search report or selected native source.
+        #[arg(long, value_enum, default_value_t = RankDescentOutput::Report)]
+        output: RankDescentOutput,
     },
     /// Run one unary function over independent data points for a fixed step count.
     Batch {
@@ -115,15 +152,57 @@ enum UntraceOutput {
     PatternCsv,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum RankDescentStrategy {
+    Adaptive,
+    Linear,
+    Static,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum RankDescentOutput {
+    Report,
+    Source,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RankDescentRun<'a> {
+    file: &'a str,
+    data_input: bool,
+    rows: Option<usize>,
+    strategy: RankDescentStrategy,
+    step: Option<&'a str>,
+    rank: Option<&'a str>,
+    minimum_agreement: Option<&'a str>,
+    output: RankDescentOutput,
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     match Cli::parse().command {
-        Command::Run { file } => run_file(&file),
+        Command::Run {
+            file,
+            data,
+            function,
+        } => match (data.as_deref(), function.as_deref()) {
+            (Some(data), Some(function)) => run_data_file(&file, function, data),
+            (None, None) => run_file(&file),
+            _ => report_error("run data and function must be supplied together"),
+        },
         Command::Check { file } => check_file(&file),
         Command::Inspect { file } => read_document(&file).map_or_else(
             |error| report_error(&error),
             |document| print_json(&inspect(&document)),
         ),
+        Command::Expand { file } => read_document(&file)
+            .and_then(|document| expand_source(&document).map_err(|error| error.to_string()))
+            .map_or_else(
+                |error| report_error(&error),
+                |source| {
+                    println!("{source}");
+                    ExitCode::SUCCESS
+                },
+            ),
         Command::Compile { file } => read_document(&file)
             .and_then(|document| compile(&document).map_err(|error| error.to_string()))
             .map_or_else(
@@ -137,13 +216,35 @@ async fn main() -> ExitCode {
             maximum_error,
         } => frequency_file(&file, first_index, samples, &maximum_error),
         Command::Untrace {
-            maximum_error_ratio,
+            rank,
             file,
             input,
             output,
         } => match input.as_deref().or(file.as_deref()) {
-            Some(source) => untrace_file(source, input.is_some(), &maximum_error_ratio, output),
+            Some(source) => untrace_file(source, input.is_some(), &rank, output),
             None => report_error("untrace requires a source document or --input data file"),
+        },
+        Command::RankDescent {
+            rows,
+            strategy,
+            step,
+            rank,
+            minimum_agreement,
+            file,
+            input,
+            output,
+        } => match input.as_deref().or(file.as_deref()) {
+            Some(source) => rank_descent_file(&RankDescentRun {
+                file: source,
+                data_input: input.is_some(),
+                rows,
+                strategy,
+                step: step.as_deref(),
+                rank: rank.as_deref(),
+                minimum_agreement: minimum_agreement.as_deref(),
+                output,
+            }),
+            None => report_error("rank-descent requires a source document or --input data file"),
         },
         Command::Batch {
             file,
@@ -244,14 +345,9 @@ async fn batch_file(
     result.map_or_else(|error| report_error(&error), |value| print_json(&value))
 }
 
-fn untrace_file(
-    file: &str,
-    data_input: bool,
-    maximum_error_ratio: &str,
-    output: UntraceOutput,
-) -> ExitCode {
+fn untrace_file(file: &str, data_input: bool, rank: &str, output: UntraceOutput) -> ExitCode {
     let result = if data_input {
-        untrace_data(file, maximum_error_ratio)
+        untrace_data(file, rank)
     } else {
         read_document(file).and_then(|document| {
             let Document::State(program) = document else {
@@ -259,20 +355,18 @@ fn untrace_file(
             };
             let state = native_space_language::core::interpret(&program)
                 .map_err(|error| error.to_string())?;
-            native_space_language::continuation::synthesize(
+            native_space_language::discovery::discover(
                 &state,
-                maximum_error_ratio,
+                rank,
                 &program.source_name,
                 program.result.span(),
             )
             .map_err(|error| error.to_string())
         })
     }
-    .and_then(|continuation| match output {
-        UntraceOutput::Source => Ok(continuation.source().to_owned()),
-        UntraceOutput::PatternCsv => continuation
-            .pattern_csv()
-            .map_err(|error| error.to_string()),
+    .and_then(|pattern| match output {
+        UntraceOutput::Source => Ok(pattern.source().to_owned()),
+        UntraceOutput::PatternCsv => pattern.pattern_csv().map_err(|error| error.to_string()),
     });
     result.map_or_else(
         |error| report_error(&error),
@@ -285,8 +379,8 @@ fn untrace_file(
 
 fn untrace_data(
     file: &str,
-    maximum_error_ratio: &str,
-) -> Result<native_space_language::continuation::Continuation, String> {
+    rank: &str,
+) -> Result<native_space_language::discovery::DiscoveredPattern, String> {
     let extension = Path::new(file)
         .extension()
         .and_then(|value| value.to_str())
@@ -294,13 +388,8 @@ fn untrace_data(
     if extension.as_deref() == Some("csv") {
         let state = native_space_language::continuation::read_observations_csv(file)
             .map_err(|error| error.to_string())?;
-        return native_space_language::continuation::synthesize(
-            &state,
-            maximum_error_ratio,
-            file,
-            None,
-        )
-        .map_err(|error| error.to_string());
+        return native_space_language::discovery::discover(&state, rank, file, None)
+            .map_err(|error| error.to_string());
     }
     let inputs =
         native_space_language::batch::read_data(file).map_err(|error| error.to_string())?;
@@ -308,8 +397,96 @@ fn untrace_data(
         .into_iter()
         .map(native_space_language::batch::DataPoint::into_state)
         .collect::<Vec<_>>();
-    native_space_language::continuation::synthesize_states(&values, maximum_error_ratio, file)
+    native_space_language::discovery::discover_states(&values, rank, file)
         .map_err(|error| error.to_string())
+}
+
+fn rank_descent_file(run: &RankDescentRun<'_>) -> ExitCode {
+    let result = rank_observations(run.file, run.data_input).and_then(|values| {
+        let rows = run.rows.unwrap_or(values.len());
+        let strategy = match (
+            run.strategy,
+            run.step,
+            run.rank,
+            run.minimum_agreement,
+        ) {
+            (RankDescentStrategy::Adaptive, None, None, None) => {
+                native_space_language::rank_descent::RankStrategy::adaptive()
+            }
+            (RankDescentStrategy::Adaptive, _, _, _) => {
+                return Err("adaptive rank descent accepts no rank controls".into());
+            }
+            (RankDescentStrategy::Linear, step, None, None) => {
+                native_space_language::rank_descent::RankStrategy::linear(step.unwrap_or("1/4"))
+            }
+            (RankDescentStrategy::Linear, _, _, _) => {
+                return Err("linear rank descent accepts only --step".into());
+            }
+            (RankDescentStrategy::Static, None, Some(rank), agreement) => {
+                native_space_language::rank_descent::RankStrategy::static_target(
+                    rank,
+                    agreement.unwrap_or("1"),
+                )
+            }
+            (RankDescentStrategy::Static, _, _, _) => {
+                return Err("static rank descent requires --rank, accepts optional --minimum-agreement, and does not accept --step".into());
+            }
+        };
+        native_space_language::rank_descent::descend_states(&values, rows, &strategy, run.file)
+            .map_err(|error| error.to_string())
+    });
+    match result {
+        Ok(search) => match run.output {
+            RankDescentOutput::Report => print_json(&search.to_data()),
+            RankDescentOutput::Source => {
+                print!("{}", search.final_pattern().source());
+                ExitCode::SUCCESS
+            }
+        },
+        Err(error) => report_error(&error),
+    }
+}
+
+fn rank_observations(
+    file: &str,
+    data_input: bool,
+) -> Result<Vec<native_space_language::core::NativeState>, String> {
+    if data_input {
+        let extension = Path::new(file)
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(str::to_ascii_lowercase);
+        if extension.as_deref() == Some("csv") {
+            let state = native_space_language::continuation::read_observations_csv(file)
+                .map_err(|error| error.to_string())?;
+            return native_space_language::continuation::indexed_observations(&state, file, None)
+                .map(|(_first_index, values)| values)
+                .map_err(|error| error.to_string());
+        }
+        return native_space_language::batch::read_data(file)
+            .map(|inputs| {
+                inputs
+                    .into_iter()
+                    .map(native_space_language::batch::DataPoint::into_state)
+                    .collect()
+            })
+            .map_err(|error| error.to_string());
+    }
+
+    read_document(file).and_then(|document| {
+        let Document::State(program) = document else {
+            return Err("rank-descent expects an exact-state observation document".into());
+        };
+        let state =
+            native_space_language::core::interpret(&program).map_err(|error| error.to_string())?;
+        native_space_language::continuation::indexed_observations(
+            &state,
+            &program.source_name,
+            program.result.span(),
+        )
+        .map(|(_first_index, values)| values)
+        .map_err(|error| error.to_string())
+    })
 }
 
 fn read_document(file: &str) -> Result<Document, String> {
@@ -344,6 +521,20 @@ fn run_file(file: &str) -> ExitCode {
     result.map_or_else(|error| report_error(&error), |value| print_output(&value))
 }
 
+fn run_data_file(file: &str, function: &str, data: &str) -> ExitCode {
+    let result = read_document(file).and_then(|document| {
+        let Document::State(program) = document else {
+            return Err("run --data expects an exact-state source document".into());
+        };
+        let inputs =
+            native_space_language::batch::read_data(data).map_err(|error| error.to_string())?;
+        let state = native_space_language::batch::execute_together(&program, function, &inputs)
+            .map_err(|error| error.to_string())?;
+        native_space_language::core::output_data(&state, program.output_kind)
+    });
+    result.map_or_else(|error| report_error(&error), |value| print_json(&value))
+}
+
 fn print_output(value: &serde_json::Value) -> ExitCode {
     match value.get("kind").and_then(serde_json::Value::as_str) {
         Some("number" | "string") => {
@@ -354,7 +545,7 @@ fn print_output(value: &serde_json::Value) -> ExitCode {
             println!("{}", value["value"].as_bool().unwrap_or(false));
             ExitCode::SUCCESS
         }
-        Some("pattern") => print_json(&value["value"]),
+        Some("vector" | "pattern") => print_json(&value["value"]),
         _ => report_error("unknown output kind"),
     }
 }

@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Negative control: factorial growth has no short constant-coefficient linear
+# recurrence in these samples. Relationship replay may still retain patterns.
+
+let observations = () =>
+add(
+  index(1, 1),
+  index(2, 2),
+  index(3, 6),
+  index(4, 24),
+  index(5, 120),
+  index(6, 720),
+  index(7, 5040),
+  index(8, 40320),
+  index(9, 362880),
+  index(10, 3628800)
+)
+
+output observations() as pattern

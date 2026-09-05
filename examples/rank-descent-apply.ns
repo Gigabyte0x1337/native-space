@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# One observed index differs from the Fibonacci continuation.
+# Apply the selected finite pattern at one positive position.
 
 let observations = () =>
 add(
@@ -14,5 +14,4 @@ add(
   index(9, 35)
 )
 
-# Allow at most one fifth of held-out indexes to disagree.
-output untrace(observations(), 1/5) as pattern
+output apply(rank_descent(observations()), 13) as vector

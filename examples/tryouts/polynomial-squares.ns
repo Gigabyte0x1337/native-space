@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Try-out: finite samples of n squared. Rank descent may discover the constant
+# coefficient recurrence behind a degree-two polynomial sequence.
+
+let observations = () =>
+add(
+  index(1, 1),
+  index(2, 4),
+  index(3, 9),
+  index(4, 16),
+  index(5, 25),
+  index(6, 36),
+  index(7, 49),
+  index(8, 64),
+  index(9, 81),
+  index(10, 100),
+  index(11, 121),
+  index(12, 144)
+)
+
+output observations() as pattern

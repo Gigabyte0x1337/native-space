@@ -1,4 +1,4 @@
 # Prime is one generative pattern. k selects an observation it is not a range.
-let observed = orient(5, index(5, one))
-let expanded = orient(5, index(5, one))
+let observed = orient(1, index(5, one))
+let expanded = orient(1, index(5, one))
 add(observed, orient(2, expanded)) = 0

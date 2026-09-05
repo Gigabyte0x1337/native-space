@@ -54,7 +54,7 @@ let p_minus_one = () =>
 ORIENT(2)
 
 let classical_four_projection = () =>
-apply(p_minus_i, p_i, p_one, p_minus_one)
+derive_all(p_minus_i, p_i, p_one, p_minus_one)
 
 let four_axis_cancellation = () =>
 classical_four_projection()
@@ -94,7 +94,7 @@ ADD()
 MULTIPLY()
 
 let classic_operator_demo = () =>
-apply(geometric_series, binomial_expand, finite_fourier, native_derivative_rules, exp_angle_flow)
+derive_all(geometric_series, binomial_expand, finite_fourier, native_derivative_rules, exp_angle_flow)
 
 let classical_model = () =>
 ADD()

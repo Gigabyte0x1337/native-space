@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use crate::core::{
     Expr, Goal, LanguageError, NativeScalar, NativeState, OutputKind, Program, Span,
-    expand_functions, optimize,
+    expand_functions, is_canonical_orientation, optimize,
 };
 
 pub const BYTECODE_VERSION: u64 = 1;
@@ -163,12 +163,26 @@ impl Compiler {
                 Some(Operand::Integer(self.slots[name])),
                 *span,
             ),
+            Expr::Spread { .. } | Expr::Concat { .. } | Expr::Fold { .. } | Expr::Camera { .. } => {
+                unreachable!(
+                    "packs, concat, fold, and camera are lowered before bytecode generation"
+                )
+            }
             Expr::Call { .. } => unreachable!("calls are erased before bytecode generation"),
             Expr::Trace { .. } => {
                 unreachable!("trace is lowered before bytecode generation")
             }
+            Expr::Length { .. } => {
+                unreachable!("length is lowered before bytecode generation")
+            }
             Expr::Untrace { .. } => {
                 unreachable!("untrace is lowered before bytecode generation")
+            }
+            Expr::RankDescent { .. } => {
+                unreachable!("rank descent is lowered before bytecode generation")
+            }
+            Expr::Apply { .. } => {
+                unreachable!("pattern application is lowered before bytecode generation")
             }
             Expr::Add { operands, span } | Expr::Multiply { operands, span } => {
                 for operand in operands {
@@ -314,6 +328,14 @@ pub fn execute(program: &BytecodeProgram) -> Result<NativeState, LanguageError> 
                         instruction.span,
                     ));
                 };
+                if !is_canonical_orientation(*turns) {
+                    return Err(vm_error(
+                        "NSV012",
+                        "orient turns must be an integer from 0 through 3; retain repeated counts with INDEX",
+                        program,
+                        instruction.span,
+                    ));
+                }
                 let value = stack.pop().ok_or_else(|| {
                     vm_error(
                         "NSV001",
@@ -443,5 +465,21 @@ mod tests {
             BytecodeProgram::from_data(&bytecode.to_data()).unwrap(),
             bytecode
         );
+    }
+
+    #[test]
+    fn vm_rejects_noncanonical_orientation_bytecode() {
+        let ast = parse("output orient(1, one)", "invalid-orient-bytecode.ns").unwrap();
+        let mut bytecode = compile(&ast).unwrap();
+        let instruction = bytecode
+            .instructions
+            .iter_mut()
+            .find(|instruction| instruction.opcode == Opcode::Orient)
+            .expect("compiled source contains one orientation instruction");
+        instruction.operand = Some(Operand::Integer(4));
+
+        let error = execute(&bytecode).unwrap_err();
+        assert_eq!(error.0.code, "NSV012");
+        assert!(error.0.span.is_some());
     }
 }

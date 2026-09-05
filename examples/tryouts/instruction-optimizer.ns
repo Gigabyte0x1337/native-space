@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Exact instruction optimization operates on the traced algorithm, not data.
+
+let redundant = (value) =>
+add(add(value, zero), multiply(value, one))
+
+# The original trace has 11 coordinates. Rank-one untrace applies exact
+# ADD-zero, MULTIPLY-one, and ADD-flatten rewrites and returns 7 coordinates.
+let removed_length = () =>
+multiply(index(1, one), index(1, one), index(1, one), index(1, one))
+
+multiply(length(untrace(trace(redundant), 1)), removed_length()) =
+length(trace(redundant))

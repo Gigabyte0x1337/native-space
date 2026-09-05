@@ -378,8 +378,12 @@ impl ShaderBuilder {
             Expr::Reference { name, .. } if name == "input" => Ok("input".into()),
             Expr::Add { operands, .. } => self.fold(operands, "checked_add"),
             Expr::Multiply { operands, .. } => self.fold(operands, "checked_multiply"),
-            Expr::Orient { turns, value, .. } if turns.rem_euclid(4) == 0 => self.expression(value),
-            Expr::Orient { turns, value, .. } if turns.rem_euclid(4) == 2 => {
+            Expr::Orient {
+                turns: 0, value, ..
+            } => self.expression(value),
+            Expr::Orient {
+                turns: 2, value, ..
+            } => {
                 let value = self.expression(value)?;
                 Ok(self.checked("checked_negate", &value, None))
             }

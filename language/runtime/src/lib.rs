@@ -12,10 +12,13 @@ pub mod bytecode;
 pub mod continuation;
 pub mod core;
 pub mod derivation;
+pub mod discovery;
 pub mod expansion;
 pub mod frequency;
 pub mod gpu;
 pub mod logic;
+pub mod rank_descent;
+pub mod rank_policy;
 pub mod strand;
 
 pub const LANGUAGE_VERSION: &str = "1.0";
@@ -123,6 +126,34 @@ pub fn inspect(document: &Document) -> Value {
         Document::Logic(program) => {
             json!({"schema":"native-space-logic-ast","version":1,"language_version":LANGUAGE_VERSION,"program":program})
         }
+    }
+}
+
+/// Generate the pure executable source behind an exact-state document.
+///
+/// Function calls, variadic packs, concat, and reflective cameras are lowered
+/// before the returned source is written. The result contains only bindings,
+/// constants, references, and the four core operations.
+///
+/// # Errors
+///
+/// Returns the first structural or lowering diagnostic. Function libraries and
+/// Boolean documents return `NST012` because they are not exact-state programs.
+pub fn expand_source(document: &Document) -> Result<String, LanguageError> {
+    match document {
+        Document::State(program) => core::expanded_source(program),
+        Document::Functions(library) => Err(LanguageError(core::Diagnostic {
+            code: "NST012".into(),
+            message: "source expansion expects an exact-state document".into(),
+            source_name: library.source_name.clone(),
+            span: library.imports.first().map(|import| import.span),
+        })),
+        Document::Logic(program) => Err(LanguageError(core::Diagnostic {
+            code: "NST012".into(),
+            message: "source expansion expects an exact-state document".into(),
+            source_name: program.source_name.clone(),
+            span: program.span,
+        })),
     }
 }
 

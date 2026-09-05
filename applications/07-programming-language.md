@@ -22,7 +22,9 @@ constructs into the existing native state and operations.
 | AST node | ADD of a string tag and indexed child states | Candidate camera |
 | Unary/binary operation | ORIENT, INDEX, ADD, or MULTIPLY over child states | Exact when it is one of the four native operations |
 | Equality assertion | native difference followed by `= 0` | Exact for a closed finite instance |
-| Source-function expansion | `derive` / `apply` over ordinary functions | Implemented generically |
+| Source-function expansion | `derive` / `derive_all` over ordinary functions | Implemented generically |
+| Generated-pattern application | `apply(rank_descent(data), position)` | Implemented as staged positive one-based finite replay |
+| Exact 3D scalar view | `output value as vector` | Implemented quadratic cone camera; defined only for zero or one unindexed oriented scalar and identifies opposite orientations |
 | Conditional, loop, closure, memory, I/O | no current translation | Requires explicit semantics |
 
 The [programming-language-data.ns](../examples/applications/programming-language-data.ns)

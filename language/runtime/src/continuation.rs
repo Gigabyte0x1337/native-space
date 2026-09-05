@@ -7,17 +7,14 @@
 //! constant-coefficient linear recurrence over exact native states. Recurrence
 //! coefficients remain exact native scalars, so the same operation applies to
 //! every retained coordinate without flattening it. Every
-//! candidate is determined from a training prefix, must then regenerate at
-//! least one held-out supplied observation, and may differ at no more than the
-//! declared ratio of held-out positions. The selected candidate first minimizes
-//! its exact mismatch ratio and then seed nodes plus recurrence-expression nodes;
-//! source length and recurrence order break remaining ties deterministically.
+//! candidate is determined from a training prefix and must regenerate every
+//! held-out supplied observation exactly. Seed nodes plus recurrence-expression
+//! nodes determine selection; source length and recurrence order break remaining
+//! ties deterministically.
 
 use std::{
-    cmp::Ordering,
     collections::{BTreeMap, BTreeSet, VecDeque},
     path::Path,
-    str::FromStr as _,
 };
 
 use num_bigint::{BigInt, BigUint};
@@ -26,6 +23,7 @@ use num_traits::{One as _, ToPrimitive as _, Zero as _};
 
 use crate::core::{
     Diagnostic, Expr, Function, LanguageError, MultiIndex, NativeScalar, NativeState, Span,
+    expression_source,
 };
 
 /// Maximum recurrence order considered by exact synthesis.
@@ -62,8 +60,6 @@ pub struct Continuation {
     observation_count: usize,
     recurrence_order: usize,
     validated_steps: usize,
-    maximum_error_ratio: String,
-    error_indexes: Vec<u64>,
     description_nodes: usize,
     primitive_steps: usize,
     next_value: NativeState,
@@ -130,18 +126,6 @@ impl Continuation {
     #[must_use]
     pub const fn validated_steps(&self) -> usize {
         self.validated_steps
-    }
-
-    /// Return the maximum accepted exact ratio of mismatching held-out indexes.
-    #[must_use]
-    pub fn maximum_error_ratio(&self) -> &str {
-        &self.maximum_error_ratio
-    }
-
-    /// Return every supplied index where the generated continuation disagrees.
-    #[must_use]
-    pub fn error_indexes(&self) -> &[u64] {
-        &self.error_indexes
     }
 
     /// Return the complete seed-plus-expression node count used for selection.
@@ -231,11 +215,6 @@ impl Continuation {
                 error("NSU009", "coefficient lag exceeds u64", source_name, None)
             })?;
             write_pattern_row(&mut writer, "coefficient", lag, coefficient, source_name)?;
-        }
-        for index in &self.error_indexes {
-            writer
-                .write_record(["mismatch", &index.to_string(), "", ""])
-                .map_err(|csv_error| error("NSU009", csv_error.to_string(), source_name, None))?;
         }
         let next_value = scalar_state(&self.next_value).ok_or_else(|| {
             error(
@@ -457,7 +436,7 @@ struct Candidate {
     primitive_steps: usize,
     source_bytes: usize,
     body_source: String,
-    error_offsets: Vec<usize>,
+    exact: bool,
     next_value: NativeState,
     held_out: usize,
 }
@@ -468,23 +447,21 @@ struct Candidate {
 /// direction one as the sequence axis and its depth as the observation index;
 /// every remaining INDEX coordinate stays inside that observation state.
 /// Missing sequence positions inside the observed endpoints are exact zero.
-/// `maximum_error_ratio` bounds the exact fraction of held-out indexes where
-/// the recursively generated value may differ from the supplied observation.
+/// Every held-out observation must match the recursively generated value.
 ///
 /// # Errors
 ///
 /// Returns `NSU001` for an empty or incompatible coordinate layout, `NSU002`
 /// when the indexed span exceeds the bounded exact-search budget, `NSU003`
-/// when no next index exists, `NSU004` when no supported recurrence meets the
-/// error ratio, or `NSU005` when the ratio is not between zero and one.
+/// when no next index exists, or `NSU004` when no supported exact recurrence
+/// matches every held-out observation.
 pub fn synthesize(
     state: &NativeState,
-    maximum_error_ratio: &str,
     source_name: &str,
     span: Option<Span>,
 ) -> Result<Continuation, LanguageError> {
-    let (first_index, values) = observations(state, source_name, span)?;
-    synthesize_values(&values, first_index, maximum_error_ratio, source_name, span)
+    let (first_index, values) = indexed_observations(state, source_name, span)?;
+    synthesize_values(&values, first_index, source_name, span)
 }
 
 /// Find one recurrence over ordered complete native states.
@@ -495,15 +472,13 @@ pub fn synthesize(
 /// # Errors
 ///
 /// Returns `NSU001` for no observations or an unrepresentable source state,
-/// `NSU003` when no next index exists, `NSU004` when no supported recurrence
-/// meets the error ratio, or `NSU005` when the ratio is not between zero and
-/// one.
+/// `NSU003` when no next index exists, or `NSU004` when no supported exact
+/// recurrence matches every held-out observation.
 pub fn synthesize_states(
     values: &[NativeState],
-    maximum_error_ratio: &str,
     source_name: &str,
 ) -> Result<Continuation, LanguageError> {
-    synthesize_values(values, 1, maximum_error_ratio, source_name, None)
+    synthesize_values(values, 1, source_name, None)
 }
 
 /// Find one exact recurrence over a compact sequence of unsigned symbols.
@@ -511,20 +486,13 @@ pub fn synthesize_states(
 /// This is mathematically the scalar case of [`synthesize_states`], but it
 /// avoids allocating one map-backed native state per symbol. The iterator must
 /// be cloneable because each bounded recurrence order is solved and validated
-/// against the same complete sequence. Compact symbol input currently accepts
-/// only an exact zero error ratio; retaining potentially billions of mismatch
-/// indexes would defeat the compact representation.
+/// against the same complete sequence.
 ///
 /// # Errors
 ///
 /// Returns `NSU001` for no observations, `NSU003` when no next index exists,
-/// `NSU004` when no supported recurrence matches the complete sequence,
-/// `NSU005` when the ratio is invalid, or `NSU011` when it is nonzero.
-pub fn synthesize_symbols<I>(
-    symbols: &I,
-    maximum_error_ratio: &str,
-    source_name: &str,
-) -> Result<Continuation, LanguageError>
+/// or `NSU004` when no supported recurrence matches the complete sequence.
+pub fn synthesize_symbols<I>(symbols: &I, source_name: &str) -> Result<Continuation, LanguageError>
 where
     I: Clone + ExactSizeIterator<Item = u16>,
 {
@@ -533,15 +501,6 @@ where
         return Err(error(
             "NSU001",
             "untrace requires at least one observation",
-            source_name,
-            None,
-        ));
-    }
-    let maximum_error_ratio = parse_error_ratio(maximum_error_ratio, source_name, None)?;
-    if !maximum_error_ratio.is_zero() {
-        return Err(error(
-            "NSU011",
-            "compact symbol untrace requires an exact maximum error ratio of 0",
             source_name,
             None,
         ));
@@ -579,7 +538,7 @@ where
         .collect::<Vec<_>>();
     let functions =
         continuation_functions(1, &seeds, &candidate.coefficients, candidate.body.clone());
-    let source = continuation_source(1, observation_count, &seeds, &candidate, "0", &[]);
+    let source = continuation_source(1, observation_count, &seeds, &candidate);
     Ok(Continuation {
         first_index: 1,
         last_index,
@@ -587,8 +546,6 @@ where
         observation_count,
         recurrence_order: candidate.order,
         validated_steps: candidate.held_out,
-        maximum_error_ratio: "0".into(),
-        error_indexes: Vec::new(),
         description_nodes: candidate.description_nodes,
         primitive_steps: candidate.primitive_steps,
         next_value: candidate.next_value.clone(),
@@ -602,7 +559,6 @@ where
 fn synthesize_values(
     values: &[NativeState],
     first_index: u64,
-    maximum_error_ratio: &str,
     source_name: &str,
     span: Option<Span>,
 ) -> Result<Continuation, LanguageError> {
@@ -615,57 +571,32 @@ fn synthesize_values(
         ));
     }
     validate_source_states(values, source_name, span)?;
-    let maximum_error_ratio = parse_error_ratio(maximum_error_ratio, source_name, span)?;
-    let maximum_error_ratio_source = rational_source(&maximum_error_ratio);
     let (last_index, next_index) =
         continuation_indexes(first_index, values.len(), source_name, span)?;
 
-    let candidate = candidates(values, &maximum_error_ratio)
-        .into_iter()
-        .min_by(|left, right| {
-            compare_error_ratio(left, right).then_with(|| {
-                (
-                    left.description_nodes,
-                    left.source_bytes,
-                    left.order,
-                    &left.body_source,
-                )
-                    .cmp(&(
-                        right.description_nodes,
-                        right.source_bytes,
-                        right.order,
-                        &right.body_source,
-                    ))
-            })
-        });
+    let candidate = candidates(values).into_iter().min_by(|left, right| {
+        (
+            left.description_nodes,
+            left.source_bytes,
+            left.order,
+            &left.body_source,
+        )
+            .cmp(&(
+                right.description_nodes,
+                right.source_bytes,
+                right.order,
+                &right.body_source,
+            ))
+    });
     let candidate = candidate.ok_or_else(|| {
         error(
             "NSU004",
-            format!(
-                "no supported continuation stays within a held-out index-error ratio of {maximum_error_ratio_source}"
-            ),
+            "no supported continuation exactly matches every held-out observation",
             source_name,
             span,
         )
     })?;
 
-    let error_indexes = candidate
-        .error_offsets
-        .iter()
-        .map(|offset| {
-            u64::try_from(*offset)
-                .ok()
-                .and_then(|offset| first_index.checked_add(offset))
-                .ok_or_else(|| {
-                    error(
-                        "NSU003",
-                        "an observation error index exceeds the native index space",
-                        source_name,
-                        span,
-                    )
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     let next_value = candidate.next_value.clone();
     let seeds = &values[..candidate.order];
     let functions = continuation_functions(
@@ -674,14 +605,7 @@ fn synthesize_values(
         &candidate.coefficients,
         candidate.body.clone(),
     );
-    let source = continuation_source(
-        first_index,
-        values.len(),
-        seeds,
-        &candidate,
-        &maximum_error_ratio_source,
-        &error_indexes,
-    );
+    let source = continuation_source(first_index, values.len(), seeds, &candidate);
 
     Ok(Continuation {
         first_index,
@@ -689,12 +613,7 @@ fn synthesize_values(
         next_index,
         observation_count: values.len(),
         recurrence_order: candidate.order,
-        validated_steps: values
-            .len()
-            .saturating_sub(candidate.order * 2)
-            .saturating_sub(error_indexes.len()),
-        maximum_error_ratio: maximum_error_ratio_source,
-        error_indexes,
+        validated_steps: values.len().saturating_sub(candidate.order * 2),
         description_nodes: candidate.description_nodes,
         primitive_steps: candidate.primitive_steps,
         next_value,
@@ -738,7 +657,18 @@ fn continuation_indexes(
     Ok((last_index, next_index))
 }
 
-fn observations(
+/// Decode one indexed state into consecutive complete observations.
+///
+/// The compact scalar layout uses one depth-one INDEX direction per position.
+/// The structured layout uses direction one as the sequence axis and retains
+/// every other coordinate as that position's complete payload. Missing
+/// positions inside the finite span become exact zero states.
+///
+/// # Errors
+///
+/// Returns `NSU001` for an empty or malformed observation layout and `NSU002`
+/// when the requested finite indexed span exceeds its explicit budget.
+pub fn indexed_observations(
     state: &NativeState,
     source_name: &str,
     span: Option<Span>,
@@ -763,13 +693,17 @@ fn observations(
             .0
             .iter()
             .map(|(index, coefficient)| {
-                let (&position, _) = index
-                    .0
-                    .first_key_value()
-                    .expect("the legacy scalar layout has one index entry");
-                (position, NativeState::scalar(coefficient.clone()))
+                let Some((&position, _depth)) = index.0.first_key_value() else {
+                    return Err(error(
+                        "NSU001",
+                        "compact scalar observation has no INDEX direction",
+                        source_name,
+                        span,
+                    ));
+                };
+                Ok((position, NativeState::scalar(coefficient.clone())))
             })
-            .collect::<BTreeMap<_, _>>();
+            .collect::<Result<BTreeMap<_, _>, LanguageError>>()?;
         return complete_observations(&indexed, source_name, span);
     }
 
@@ -846,31 +780,7 @@ fn complete_observations(
     Ok((first, values))
 }
 
-fn parse_error_ratio(
-    source: &str,
-    source_name: &str,
-    span: Option<Span>,
-) -> Result<BigRational, LanguageError> {
-    let ratio = BigRational::from_str(source).map_err(|_parse_error| {
-        error(
-            "NSU005",
-            "untrace maximum error ratio must be an exact number from 0 through 1",
-            source_name,
-            span,
-        )
-    })?;
-    if ratio < BigRational::zero() || ratio > BigRational::one() {
-        return Err(error(
-            "NSU005",
-            "untrace maximum error ratio must be an exact number from 0 through 1",
-            source_name,
-            span,
-        ));
-    }
-    Ok(ratio)
-}
-
-fn candidates(values: &[NativeState], maximum_error_ratio: &BigRational) -> Vec<Candidate> {
+fn candidates(values: &[NativeState]) -> Vec<Candidate> {
     if values.len() == 1 {
         return Vec::new();
     }
@@ -882,7 +792,7 @@ fn candidates(values: &[NativeState], maximum_error_ratio: &BigRational) -> Vec<
                 candidate(order, coefficients, body, values)
             })
         })
-        .filter(|candidate| candidate_error_ratio(candidate) <= *maximum_error_ratio)
+        .filter(|candidate| candidate.exact)
         .collect()
 }
 
@@ -937,7 +847,7 @@ where
         primitive_steps,
         source_bytes,
         body_source,
-        error_offsets: Vec::new(),
+        exact: true,
         next_value,
         held_out: observation_count - training_end,
     })
@@ -1013,17 +923,6 @@ fn apply_scalar_recurrence(
         })
 }
 
-fn candidate_error_ratio(candidate: &Candidate) -> BigRational {
-    BigRational::new(
-        BigInt::from(candidate.error_offsets.len()),
-        BigInt::from(candidate.held_out),
-    )
-}
-
-fn compare_error_ratio(left: &Candidate, right: &Candidate) -> Ordering {
-    (left.error_offsets.len() * right.held_out).cmp(&(right.error_offsets.len() * left.held_out))
-}
-
 fn candidate(
     order: usize,
     coefficients: Vec<NativeScalar>,
@@ -1031,9 +930,7 @@ fn candidate(
     values: &[NativeState],
 ) -> Candidate {
     let generated = generate_values(&values[..order], &coefficients, values.len() + 1);
-    let error_offsets = (order * 2..values.len())
-        .filter(|position| generated[*position] != values[*position])
-        .collect::<Vec<_>>();
+    let exact = (order * 2..values.len()).all(|position| generated[position] == values[position]);
     let next_value = generated[values.len()].clone();
     let held_out = values.len() - order * 2;
     let description_nodes = order + expression_nodes(&body);
@@ -1052,7 +949,7 @@ fn candidate(
         primitive_steps,
         source_bytes,
         body_source,
-        error_offsets,
+        exact,
         next_value,
         held_out,
     }
@@ -1272,6 +1169,7 @@ fn continuation_functions(
         parameters: std::iter::once(POSITION_PARAMETER.into())
             .chain(previous.iter().cloned())
             .collect(),
+        variadic: false,
         body: Expr::Call {
             function: CONTINUATION_FUNCTION.into(),
             arguments: recursive_arguments,
@@ -1287,6 +1185,7 @@ fn continuation_functions(
         Function {
             name: NEXT_FUNCTION.into(),
             parameters: previous,
+            variadic: false,
             body: next_body,
             span: None,
         },
@@ -1294,6 +1193,7 @@ fn continuation_functions(
         Function {
             name: START_FUNCTION.into(),
             parameters: Vec::new(),
+            variadic: false,
             body: Expr::Call {
                 function: CONTINUATION_FUNCTION.into(),
                 arguments: start_arguments,
@@ -1309,8 +1209,6 @@ fn continuation_source(
     observation_count: usize,
     seeds: &[NativeState],
     candidate: &Candidate,
-    maximum_error_ratio: &str,
-    error_indexes: &[u64],
 ) -> String {
     let (last_index, next_index) = continuation_indexes(
         first_index,
@@ -1337,23 +1235,11 @@ fn continuation_source(
     let mut start_arguments = vec![first_generated.to_string()];
     start_arguments.extend(seeds.iter().rev().map(state_source));
     let held_out = observation_count.saturating_sub(candidate.order * 2);
-    let matched = held_out.saturating_sub(error_indexes.len());
-    let actual_error_ratio = rational_source(&candidate_error_ratio(candidate));
-    let errors = if error_indexes.is_empty() {
-        "none".to_owned()
-    } else {
-        error_indexes
-            .iter()
-            .map(u64::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
     format!(
         "# Generated by untrace from exact ordered observations {first_index} through {last_index}.\n\
+# Mode: deterministic.\n\
 # Grammar: homogeneous constant-coefficient linear recurrence.\n\
-# Order: {}. Held-out matches: {matched} of {held_out}.\n\
-# Maximum held-out index-error ratio: {maximum_error_ratio}. Actual: {actual_error_ratio}.\n\
-# Mismatching indexes: {errors}.\n\
+# Order: {}. Exact held-out matches: {held_out} of {held_out}.\n\
 # First unseen prediction at index {next_index}: {}.\n\n\
 let {NEXT_FUNCTION} = ({parameters}) =>\n{}\n\n\
 let {CONTINUATION_FUNCTION} = (position, {parameters}) =>\n{CONTINUATION_FUNCTION}({})\n\n\
@@ -1456,73 +1342,17 @@ fn rational_source(value: &BigRational) -> String {
     }
 }
 
-fn expression_source(expression: &Expr) -> String {
-    match expression {
-        Expr::Zero { .. } => "zero".into(),
-        Expr::One { .. } => "one".into(),
-        Expr::Scalar { real, imag, .. } if imag == "0" => real.clone(),
-        Expr::Scalar { real, imag, .. } => format!("scalar({real}, {imag})"),
-        Expr::Reference { name, .. } => name.clone(),
-        Expr::Add { operands, .. } => format!(
-            "add({})",
-            operands
-                .iter()
-                .map(expression_source)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        Expr::Multiply { operands, .. } => format!(
-            "multiply({})",
-            operands
-                .iter()
-                .map(expression_source)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        Expr::Call {
-            function,
-            arguments,
-            ..
-        } => format!(
-            "{function}({})",
-            arguments
-                .iter()
-                .map(expression_source)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        Expr::Orient { turns, value, .. } => {
-            format!("orient({turns}, {})", expression_source(value))
-        }
-        Expr::Index {
-            direction,
-            multiplicity,
-            value,
-            ..
-        } => {
-            let multiplicity = usize::try_from(*multiplicity)
-                .expect("validated continuation INDEX multiplicity fits usize");
-            format!(
-                "{}{}{}",
-                format!("index({direction}, ").repeat(multiplicity),
-                expression_source(value),
-                ")".repeat(multiplicity)
-            )
-        }
-        Expr::Trace { function, .. } => format!("trace({function})"),
-        Expr::Untrace { value, .. } => format!("untrace({})", expression_source(value)),
-    }
-}
-
 fn expression_nodes(expression: &Expr) -> usize {
     match expression {
         Expr::Add { operands, .. } | Expr::Multiply { operands, .. } => {
             1 + operands.iter().map(expression_nodes).sum::<usize>()
         }
+        Expr::Concat { values, .. } => 1 + values.iter().map(expression_nodes).sum::<usize>(),
         Expr::Call { arguments, .. } => 1 + arguments.iter().map(expression_nodes).sum::<usize>(),
-        Expr::Orient { value, .. } | Expr::Index { value, .. } | Expr::Untrace { value, .. } => {
-            1 + expression_nodes(value)
-        }
+        Expr::Orient { value, .. }
+        | Expr::Index { value, .. }
+        | Expr::Length { value, .. }
+        | Expr::Untrace { value, .. } => 1 + expression_nodes(value),
         _ => 1,
     }
 }
@@ -1532,9 +1362,10 @@ fn operation_steps(expression: &Expr) -> usize {
         Expr::Add { operands, .. } | Expr::Multiply { operands, .. } => {
             1 + operands.iter().map(operation_steps).sum::<usize>()
         }
+        Expr::Concat { values, .. } => values.iter().map(operation_steps).sum(),
         Expr::Orient { value, .. } | Expr::Index { value, .. } => 1 + operation_steps(value),
         Expr::Call { arguments, .. } => arguments.iter().map(operation_steps).sum(),
-        Expr::Untrace { value, .. } => operation_steps(value),
+        Expr::Length { value, .. } | Expr::Untrace { value, .. } => operation_steps(value),
         _ => 0,
     }
 }
@@ -1586,7 +1417,7 @@ mod tests {
 
     #[test]
     fn constant_sequence_has_one_step_recurrence() {
-        let continuation = synthesize(&indexed(&[7, 7, 7, 7]), "0", "constant.ns", None).unwrap();
+        let continuation = synthesize(&indexed(&[7, 7, 7, 7]), "constant.ns", None).unwrap();
 
         assert_eq!(continuation.recurrence_order(), 1);
         assert_eq!(continuation.primitive_steps(), 0);
@@ -1600,7 +1431,7 @@ mod tests {
     #[test]
     fn fibonacci_finds_the_two_value_continuation() {
         let continuation =
-            synthesize(&indexed(&[1, 1, 2, 3, 5, 8, 13]), "0", "fibonacci.ns", None).unwrap();
+            synthesize(&indexed(&[1, 1, 2, 3, 5, 8, 13]), "fibonacci.ns", None).unwrap();
 
         assert_eq!(continuation.recurrence_order(), 2);
         assert_eq!(continuation.validated_steps(), 3);
@@ -1627,7 +1458,7 @@ mod tests {
     #[test]
     fn continuation_sequence_executes_the_synthesized_recurrence() {
         let continuation =
-            synthesize(&indexed(&[1, 1, 2, 3, 5, 8, 13]), "0", "fibonacci.ns", None).unwrap();
+            synthesize(&indexed(&[1, 1, 2, 3, 5, 8, 13]), "fibonacci.ns", None).unwrap();
 
         let values = continuation
             .sequence()
@@ -1645,22 +1476,11 @@ mod tests {
     }
 
     #[test]
-    fn error_ratio_selects_the_most_repeatable_continuation() {
+    fn one_mismatch_rejects_a_deterministic_continuation() {
         let observations = indexed(&[1, 1, 2, 3, 5, 8, 13, 21, 35]);
+        let error = synthesize(&observations, "noisy-fibonacci.ns", None).unwrap_err();
 
-        let exact = synthesize(&observations, "1/6", "noisy-fibonacci.ns", None).unwrap_err();
-        let continuation = synthesize(&observations, "1/5", "noisy-fibonacci.ns", None).unwrap();
-
-        assert_eq!(exact.0.code, "NSU004");
-        assert_eq!(continuation.recurrence_order(), 2);
-        assert_eq!(continuation.maximum_error_ratio(), "1/5");
-        assert_eq!(continuation.error_indexes(), &[9]);
-        assert_eq!(continuation.validated_steps(), 4);
-        assert_eq!(
-            continuation.next_value(),
-            &NativeState::scalar(NativeScalar::from_text("55", "0").unwrap())
-        );
-        assert!(continuation.source().contains("Mismatching indexes: 9"));
+        assert_eq!(error.0.code, "NSU004");
     }
 
     #[test]
@@ -1675,10 +1495,10 @@ mod tests {
                 MultiIndex::from_depths([(birth, 1)]).unwrap(),
                 NativeScalar::from_text(&prime.to_string(), "0")
                     .unwrap()
-                    .orient(i64::try_from(birth).expect("test birth index fits i64")),
+                    .orient(i64::try_from(birth % 4).expect("canonical prime phase fits i64")),
             )
         }));
-        let error = synthesize(&state, "0", "prime30.ns", None).unwrap_err();
+        let error = synthesize(&state, "prime30.ns", None).unwrap_err();
 
         assert_eq!(error.0.code, "NSU004");
     }
@@ -1695,7 +1515,7 @@ mod tests {
             vector(&[13, 34]),
         ];
 
-        let continuation = synthesize_states(&values, "0", "vectors.json").unwrap();
+        let continuation = synthesize_states(&values, "vectors.json").unwrap();
 
         assert_eq!(continuation.recurrence_order(), 2);
         assert_eq!(continuation.validated_steps(), 3);
@@ -1717,7 +1537,7 @@ mod tests {
     fn complete_input_sequence_is_retained_beyond_sixty_four_observations() {
         let mut values = vec![vector(&[2, 3]); 100];
 
-        let continuation = synthesize_states(&values, "0", "long-vectors.json").unwrap();
+        let continuation = synthesize_states(&values, "long-vectors.json").unwrap();
 
         assert_eq!(continuation.observation_count(), 100);
         assert_eq!(continuation.recurrence_order(), 1);
@@ -1725,7 +1545,7 @@ mod tests {
         assert_eq!(continuation.next_value(), &vector(&[2, 3]));
 
         values[99] = vector(&[2, 4]);
-        let error = synthesize_states(&values, "0", "long-vectors.json").unwrap_err();
+        let error = synthesize_states(&values, "long-vectors.json").unwrap_err();
         assert_eq!(error.0.code, "NSU004");
     }
 
@@ -1733,7 +1553,7 @@ mod tests {
     fn compact_symbols_use_the_same_exact_recurrence_grammar() {
         let symbols = [1_u16, 1, 2, 3, 5, 8, 13];
 
-        let continuation = synthesize_symbols(&symbols.into_iter(), "0", "symbols").unwrap();
+        let continuation = synthesize_symbols(&symbols.into_iter(), "symbols").unwrap();
 
         assert_eq!(continuation.observation_count(), 7);
         assert_eq!(continuation.recurrence_order(), 2);
@@ -1751,16 +1571,9 @@ mod tests {
             .map(u16::from)
             .collect::<Vec<_>>();
 
-        let error = synthesize_symbols(&symbols.into_iter(), "0", "text").unwrap_err();
+        let error = synthesize_symbols(&symbols.into_iter(), "text").unwrap_err();
 
         assert_eq!(error.0.code, "NSU004");
-    }
-
-    #[test]
-    fn compact_symbols_do_not_hide_mismatches_in_large_error_lists() {
-        let error = synthesize_symbols(&[1_u16, 2, 3].into_iter(), "1/2", "symbols").unwrap_err();
-
-        assert_eq!(error.0.code, "NSU011");
     }
 
     #[test]
@@ -1795,7 +1608,7 @@ mod tests {
                 })
             }));
 
-        let continuation = synthesize(&state, "0", "array-style.ns", None).unwrap();
+        let continuation = synthesize(&state, "array-style.ns", None).unwrap();
         let expected =
             NativeState::from_terms(vector(&[21, 55]).0.into_iter().map(|(index, coefficient)| {
                 (
@@ -1819,7 +1632,7 @@ mod tests {
             MultiIndex::from_depths([(2, 1), (3, 1)]).unwrap(),
             NativeScalar::one(),
         )]);
-        let error = synthesize(&state, "0", "invalid.ns", None).unwrap_err();
+        let error = synthesize(&state, "invalid.ns", None).unwrap_err();
 
         assert_eq!(error.0.code, "NSU001");
     }

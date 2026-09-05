@@ -14,25 +14,42 @@ publish = false
 [features]
 default = []
 gpu = ["dep:bytemuck", "dep:wgpu"]
+visual = ["gpu", "dep:pollster", "dep:winit"]
+# Opt-in diagnostic backend for the visual CPU solver. The scalar and SIMD
+# builds instantiate the same solver equations through different vector types.
+cpu-simd = ["dep:glam"]
 
 [[bin]]
 name = "native-space"
 path = "src/main.rs"
 
+[[example]]
+name = "native-water-native"
+path = "examples/native_water_native.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "native-water-visual"
+path = "examples/native_water_visual/main.rs"
+required-features = ["visual"]
+
 [dependencies]
-bytemuck = { version = "1.24.0", optional = true }
+bytemuck = { version = "1.24.0", features = ["derive"], optional = true }
 clap = { version = "4.6.6", features = ["derive"] }
 csv = "1.4.0"
+glam = { version = "0.33.6", default-features = false, features = ["std"], optional = true }
 mimalloc = "0.1.52"
 num-bigint = "0.4.6"
 num-rational = "0.4.2"
 num-traits = "0.2.19"
+pollster = { version = "0.4.0", optional = true }
 rmcp = { version = "3.1.4", features = ["transport-io"] }
 schemars = "1.0.4"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 tokio = { version = "1.49.0", features = ["io-std", "macros", "rt-multi-thread", "signal"] }
 wgpu = { version = "30.0.1", optional = true }
+winit = { version = "0.30.12", default-features = false, features = ["rwh_06"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.23.0"

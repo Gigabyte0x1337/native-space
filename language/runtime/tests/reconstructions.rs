@@ -75,7 +75,8 @@ fn dft(values: &[NativeScalar]) -> Vec<NativeScalar> {
                 .iter()
                 .enumerate()
                 .fold(NativeScalar::zero(), |sum, (position, value)| {
-                    let turns = -i64::try_from(frequency * position * 4 / n).unwrap();
+                    let turns =
+                        (-i64::try_from(frequency * position * 4 / n).unwrap()).rem_euclid(4);
                     sum.add(&value.orient(turns))
                 })
         })

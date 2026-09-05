@@ -234,6 +234,11 @@ This clock wraps after four steps:
 J -> -1 -> -J -> 1 -> J -> ...
 ```
 
+The language therefore writes only the canonical orientation positions
+`orient(0, value)` through `orient(3, value)`. It never silently turns
+`orient(5, value)` into `orient(1, value)`: the wrapped position is ORIENT,
+while the retained step or birth count is INDEX.
+
 The second clock is birth identity. It does not wrap:
 
 $$
@@ -544,19 +549,109 @@ the compiler lowers its result to exact constants and nested `ADD`, `ORIENT`,
 and `INDEX` coordinates. The ordinary evaluator and VM then agree on that
 native state.
 
-`untrace(value)` goes from indexed observations back to a continuation program.
-The current exact synthesis grammar is one homogeneous constant-coefficient
-linear recurrence over complete native states. Its coefficients are exact
-native scalars, but its observations may be scalars, vectors, matrices, or
-higher-rank indexed states. One coefficient sequence must work for every
-coordinate; `untrace` never flattens the state or learns unrelated rules per
-coordinate.
+Parameter blocks can use a trailing source pack without becoming an array or
+hidden runtime object:
 
-Candidate coefficients are learned from a prefix and then compared with every
-held-out supplied position along the recursively generated path. With the
-default zero ratio, every held-out state must match exactly. With a positive
-ratio, the lowest exact position-error ratio wins before seed-plus-expression
-size; source length and recurrence order break remaining ties deterministically.
+```ns
+let parameters = (values...) =>
+concat(9, values...)
+
+output parameters(2, 3, 5) as pattern
+```
+
+The pack is a finite source pattern. `values...` forwards its expressions, and
+`concat(9, ...)` generates the following pure structure before evaluation:
+
+```ns
+output add(
+  index(9, 2),
+  index(9, index(9, 3)),
+  index(9, index(9, index(9, 5)))
+) as pattern
+```
+
+There is no pack or concat bytecode. Run
+`native-space expand examples/variadic-concat.ns` to print the generated `.ns`
+source. The complete zero proof in
+[`examples/variadic-concat.ns`](examples/variadic-concat.ns) forwards the pack
+through two functions and proves that the result equals the manually written
+ADD/INDEX expression. Direction 9 is explicit: choose an axis absent from the
+values when positions must remain distinct; an existing axis follows ordinary
+INDEX-depth addition and can merge terms.
+
+The same finite pack can drive a stateful source program. `fold` is only the
+left-to-right nesting of one ordinary two-argument function; it has no runtime
+model hidden behind its name:
+
+```ns
+let observe = (total, value) => add(total, value)
+let train = (values...) => fold(observe, zero, values...)
+
+train(1, 2, 3, 4) = 10
+```
+
+Models also need to keep fields separate and move the same input coordinate to
+different roles. The explicit coordinate camera
+`camera(from, to, value)` retains terms carrying `from`, moves that complete
+INDEX depth to `to`, and discards the other terms. Destination zero unwraps a
+field. Because discarded coordinates and remapping collisions lose
+information, this camera is never silently applied.
+
+[`examples/data-frequency-model.ns`](examples/data-frequency-model.ns) uses
+only source functions, fold, that camera, and the core algebra to count ordered
+transitions. Rust only loads
+[`examples/data-frequency-observations.json`](examples/data-frequency-observations.json)
+and passes its five exact observations to `train`:
+
+```powershell
+cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- run examples/data-frequency-model.ns --data examples/data-frequency-observations.json --function train
+```
+
+The result has counts `A->A = 1`, `A->B = 2`, and `B->A = 1`. The same file
+contains a complete zero proof of those counts. `native-space expand` removes
+the finite fold and evaluates the closed camera applications, leaving only
+exact constants and the four core operations. This proves the clean boundary:
+the host provides ordered data and execution, while field layout, context,
+update, and frequency geometry stay in `.ns`. It is a finite transition model,
+not yet an LLM or a performance claim.
+
+The strand can measure its own instruction-coordinate extent. `length` moves
+the consecutive continuation positions onto INDEX direction 1:
+
+```ns
+let shorter = (value) => value
+let longer = (value) => add(value, one)
+
+let saved_length = () =>
+multiply(index(1, one), index(1, one))
+
+multiply(length(trace(shorter)), saved_length()) = length(trace(longer))
+```
+
+This complete proof is runnable as [`examples/program-length.ns`](examples/program-length.ns).
+`shorter` has five trace coordinates. `longer` adds the ADD and ONE
+coordinates, so its length is seven. MULTIPLY adds native INDEX depths;
+therefore the positive two-step factor proves strict shortening without a
+less-than primitive. `length` is a reflective camera lowered before bytecode,
+not a fifth core operation. It measures trace-coordinate count, not serialized
+bytes, execution time, or globally minimal semantics.
+
+`untrace(value)` now has exactly two outcomes.
+
+1. **Deterministic mode.** It searches the bounded exact recurrence grammar.
+   One coefficient sequence must regenerate every held-out complete native
+   state. A single mismatch rejects that candidate.
+
+2. **Relationship mode.** If no supported exact recurrence exists, it counts
+   every earlier-to-later input relationship. Each channel retains the earlier
+   exact symbol, later exact symbol, positive relative distance, and occurrence
+   count.
+
+Rank `1` is the default and preserves every distinct relationship channel.
+`untrace(value, rank)` accepts an exact rank from `0` through `1`; for example,
+rank `1/5` keeps the strongest ceiling of 20% of the channels. Counts rank first
+and the exact channel coordinate breaks ties, so selection is deterministic.
+Rank never permits an error in deterministic mode.
 
 ```ns
 let observations = () =>
@@ -574,7 +669,9 @@ predicts index 8 as 21. Its result is a nested operation strand containing the
 rule, its seed states, an explicit position increment, and one recursive edge
 that represents continuation without unfolding it.
 
-If observations may contain isolated errors, give an explicit maximum ratio:
+If the observations do not have an exact deterministic continuation, the same
+call returns their complete relationship-frequency pattern. A lower rank asks
+for a smaller strongest-channel view:
 
 ```ns
 let observations = () =>
@@ -583,12 +680,10 @@ add(index(1, 1), index(2, 1), index(3, 2), index(4, 3), index(5, 5), index(6, 8)
 output untrace(observations(), 1/5) as pattern
 ```
 
-The generated continuation still produces Fibonacci value 34 at index 9 and
-reports index 9 as the one mismatch among five held-out indexes. It then
-predicts 55 at index 10. The
-runtime compares the recursively generated path with each held-out observation;
-it does not feed a mismatching observation back into the path. Candidate
-selection minimizes the exact mismatch ratio first and program size second.
+Here no approximate Fibonacci rule is accepted. The result instead contains a
+dictionary of the exact observed symbols and the strongest one fifth of all
+ordered relationship channels. The distance coordinate keeps adjacent and
+long-range occurrences separate.
 
 The readable generated `.ns` source is available directly:
 
@@ -596,10 +691,10 @@ The readable generated `.ns` source is available directly:
 cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- untrace examples/continuation-observations.ns
 ```
 
-The command-line form accepts the same exact ratio:
+The command-line form accepts the same exact rank:
 
 ```powershell
-cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- untrace --maximum-error-ratio 1/5 examples/continuation-observations-with-error.ns
+cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- untrace --rank 1/5 examples/relationship-observations.ns
 ```
 
 For structured data, the JSON or `NSBATCH` root is one ordered observation
@@ -628,9 +723,9 @@ states, and predicts `[21, 55]`. The generated `.ns` file contains complete
 native seed states and can be run directly; see
 [`examples/untrace-array-model.ns`](examples/untrace-array-model.ns).
 
-Scalar observations may also come from CSV. For scalar models, `untrace` can
-return the discovered seeds, recurrence coefficients, mismatches, and next
-prediction as a compact CSV pattern instead of generated source:
+Scalar observations may also come from CSV. CSV output contains seeds,
+coefficients, and a prediction in deterministic mode. In relationship mode it
+contains the exact counted symbol dictionary and retained relationship channels:
 
 ```powershell
 cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- untrace --input examples/continuation-observations.csv --output pattern-csv
@@ -644,6 +739,101 @@ coefficient,1,1,0
 coefficient,2,1,0
 prediction,8,21,0
 ```
+
+Relationship patterns also have one deterministic finite replay. The first
+observed symbol is the starting row. At every next row, a retained channel
+votes when its earlier symbol appears at the channel's exact distance; its
+exact frequency is the vote weight. The greatest vote wins, first-occurrence
+symbol order breaks ties, and the most frequent observed symbol is used when
+no channel applies. Symbol frequencies and relationship frequencies are both
+stored in the emitted native coordinate state.
+
+`rank-descent` uses that replay to search for a smaller exact pattern. With
+$N$ supplied observations it generates an $N$-row rank-one reference by
+default. Every candidate is learned from that same reference and must reproduce
+all $N$ rows exactly before it can become the selected result. A mismatch still
+reports the exact prefix and first differing row.
+
+The same search is available directly in Native Space source. No rank needs to
+be chosen in advance:
+
+```ns
+let observations = () =>
+add(index(1, 1), index(2, 1), index(3, 2), index(4, 3), index(5, 5), index(6, 8), index(7, 13), index(8, 21), index(9, 35))
+
+output rank_descent(observations()) as pattern
+```
+
+This complete example is [`examples/rank-descent.ns`](examples/rank-descent.ns).
+`rank_descent(value)` selects adaptive exact search. A second argument selects
+one static exact rank, so `rank_descent(value, 1/4)` retains the strongest
+quarter of the relationship channels and accepts it only if every reference
+row still matches. A third argument declares the minimum finite agreement:
+`rank_descent(value, 1/4, 99/100)` is explicitly lossy and may accept 99 percent
+row agreement. Reports keep the exact prefix, total matching rows, threshold,
+and selected rank separate. Every form is staged and replaced by the selected
+native coordinate pattern before bytecode; rank descent is not a fifth core
+operation.
+
+The selected pattern can be evaluated at a positive one-based position inside
+the same source document:
+
+```ns
+output apply(rank_descent(observations()), 13) as vector
+```
+
+The complete runnable file is
+[`examples/rank-descent-apply.ns`](examples/rank-descent-apply.ns). It returns
+the exact vector `[4, 0, 4]`, and source expansion reduces the whole expression
+to `output 2 as vector`. The selected native value itself is `2`; changing the
+final camera to `as number` prints that scalar directly.
+
+Here `as vector` means the project's existing quadratic cone camera. For one
+unindexed oriented scalar `x + iy`, it returns
+`[x*x - y*y, 2*x*y, x*x + y*y]`. Thus `2` becomes `[4, 0, 4]`. This is an exact
+3D projection, but it intentionally identifies opposite orientations: `z` and
+`-z` have the same vector. Indexed or multi-term states are rejected instead
+of being silently collapsed; use `as pattern` when the complete flat stack is
+needed.
+
+`apply` currently accepts a direct `rank_descent(...)` pattern. A position
+inside the data-sized reference is covered by exact replay only when the
+minimum agreement is one. With a lower threshold it is a measured lossy replay.
+A later position is deterministic continuation from the selected pattern but
+is not additional evidence that the unseen value is correct.
+
+The default adaptive strategy starts at `1/2`. Full success searches lower;
+failure searches higher:
+
+```text
+1/2 succeeds -> try 1/4
+1/2 fails    -> try 3/4
+```
+
+```powershell
+cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- rank-descent --input examples/rank-descent-observations.json
+```
+
+For the included 40 observations, the checked run selects rank `25/512`: 39
+of 780 relationship channels reproduce all 40 reference rows. Rank `1/32`
+retains 25 channels but first differs at row 27, so it is not selected.
+
+The linear strategy tests every positive configured step. This quarter-step
+example tests `3/4`, `1/2`, and `1/4`:
+
+```powershell
+cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- rank-descent --input examples/rank-descent-observations.json --strategy linear --step 1/4
+```
+
+Use `--output source` to print the selected complete native relationship
+pattern. `--rows` may override the data-sized reference for a finite
+experiment. Adaptive search returns the lowest fully successful candidate it
+actually tested; it does not assume or claim that untested rank outcomes are
+monotone.
+
+One static CLI candidate uses `--strategy static --rank 1/4`. Add
+`--minimum-agreement 99/100` only when measured lossy agreement is intended;
+the default is exact agreement `1`.
 
 
 For repeated work over many independent inputs, keep the step function in
@@ -749,11 +939,10 @@ performance boundary are in `language/FREQUENCY.md`.
 This is bounded program synthesis, not a universal shortest-program oracle.
 A finite sample does not determine a unique future. All supplied file
 observations remain available as evidence, while the searched recurrence order
-is bounded to 32. Unsupported layouts, over-budget searches, and samples with
-no shared recurrence inside the declared index-error ratio fail explicitly. In
-particular, the first 30 oriented prime observations do not pass this recurrence
-grammar; the runtime refuses to present a fitted lookup as a discovered prime
-algorithm.
+is bounded to 32. Unsupported layouts and over-budget searches fail explicitly.
+The first 30 oriented prime observations do not pass the deterministic
+recurrence grammar, so they select relationship mode instead. That finite
+frequency description is not presented as a discovered prime algorithm.
 
 Both reflective forms disappear before bytecode. The generated program still
 contains only exact constants and ADD, MULTIPLY, ORIENT, and INDEX.
@@ -1683,10 +1872,9 @@ Functions can be imported, applied, nested, and used to define binary
 operators. Core operations cannot be overridden. Declaration order determines
 operator precedence. `derive` reports a flattened external operation camera;
 `trace(function)` returns the source graph itself as a nested native state;
-`untrace(value, maximum_error_ratio)` searches the documented recurrence grammar,
-minimizes the exact held-out index-error ratio before program size, and returns the recursive
-operation strand together with its exact mismatch indexes. Omitting the second
-argument requires a zero error ratio.
+`untrace(value, rank)` first searches for an exact deterministic continuation.
+If none exists, it returns ranked relationship frequencies over all ordered
+input pairs. Omitting rank means rank `1`, which retains every channel.
 Parser and structural failures retain source locations; a failed zero check
 currently reports that its final native state is nonzero.
 
@@ -1709,6 +1897,9 @@ cargo run --manifest-path $manifest --release --bin native-space -- run examples
 
 # Expand a source function to the four core operations.
 cargo run --manifest-path $manifest --release --bin native-space -- derive --source examples/math-functions.ns pi
+
+# Print the pure source generated from variadic packs and concat.
+cargo run --manifest-path language/runtime/Cargo.toml --release --bin native-space -- expand examples/variadic-concat.ns
 
 # Display the tagged identity residuals. This validates and runs the document;
 # classic_identities.ns is an output example, not a zero-proof document.

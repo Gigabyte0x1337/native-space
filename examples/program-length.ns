@@ -1,0 +1,16 @@
+# Program length is the stretched continuation extent of a canonical trace.
+# Each trace coordinate contributes one INDEX step on the length axis.
+
+let shorter = (value) =>
+value
+
+let longer = (value) =>
+add(value, one)
+
+# longer has two additional coordinates: ADD and ONE.
+let saved_length = () =>
+multiply(index(1, one), index(1, one))
+
+# No less-than operation is needed. A nonempty positive length factor witnesses
+# that the shorter trace occupies fewer instruction positions.
+multiply(length(trace(shorter)), saved_length()) = length(trace(longer))

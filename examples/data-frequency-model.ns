@@ -1,0 +1,44 @@
+# A complete finite transition-frequency model written in Native Space.
+# Rust only loads the ordered observations and calls train.
+
+# Model field 100 stores transition counts. Field 101 stores the last symbol.
+# Symbol observations use the one-dimensional array axis 1.
+let counts = (model) =>
+camera(100, 0, model)
+
+let previous = (model) =>
+camera(101, 0, model)
+
+# Remapping the same symbol axis to two distinct directions preserves order.
+let previous_axis = (symbol) =>
+camera(1, 10, symbol)
+
+let current_axis = (symbol) =>
+camera(1, 11, symbol)
+
+let transition = (left, right) =>
+multiply(previous_axis(left), current_axis(right))
+
+let observe = (model, symbol) =>
+add(
+  index(100, add(counts(model), transition(previous(model), symbol))),
+  index(101, symbol)
+)
+
+# fold expands to observe(observe(...)) over the complete finite input pack.
+let train = (first, rest...) =>
+camera(100, 0, fold(observe, index(101, first), rest...))
+
+# The executable proof uses the same train function as run --data.
+let a = () => index(1, one)
+let b = () => index(1, index(1, one))
+
+let expected = () =>
+add(
+  transition(a(), b()),
+  transition(b(), a()),
+  transition(a(), a()),
+  transition(a(), b())
+)
+
+train(a(), b(), a(), a(), b()) = expected()

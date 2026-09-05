@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Try-out: exact 2x2 matrix multiplication followed by rank descent.
+# Matrix coordinates 2, 3, 4, 5 are a11, a12, a21, a22.
+
+let matrix = (a11, a12, a21, a22) =>
+add(index(2, a11), index(3, a12), index(4, a21), index(5, a22))
+
+let a11 = (value) => camera(2, 0, value)
+let a12 = (value) => camera(3, 0, value)
+let a21 = (value) => camera(4, 0, value)
+let a22 = (value) => camera(5, 0, value)
+
+let matrix_multiply = (left, right) =>
+matrix(
+  add(multiply(a11(left), a11(right)), multiply(a12(left), a21(right))),
+  add(multiply(a11(left), a12(right)), multiply(a12(left), a22(right))),
+  add(multiply(a21(left), a11(right)), multiply(a22(left), a21(right))),
+  add(multiply(a21(left), a12(right)), multiply(a22(left), a22(right)))
+)
+
+# Q is the Fibonacci matrix. These values are computed through the same
+# matrix_multiply function rather than writing their entries as observations.
+let q0 = () => matrix(1, 0, 0, 1)
+let q1 = () => matrix(1, 1, 1, 0)
+let q2 = () => matrix_multiply(q1(), q1())
+let q3 = () => matrix_multiply(q2(), q1())
+let q4 = () => matrix_multiply(q3(), q1())
+let q5 = () => matrix_multiply(q4(), q1())
+let q6 = () => matrix_multiply(q5(), q1())
+
+# Direction 1 is the sequence axis. Matrix coordinates remain complete payload.
+let observations = () =>
+add(
+  index(1, q0()),
+  index(1, index(1, q1())),
+  index(1, index(1, index(1, q2()))),
+  index(1, index(1, index(1, index(1, q3())))),
+  index(1, index(1, index(1, index(1, index(1, q4()))))),
+  index(1, index(1, index(1, index(1, index(1, index(1, q5())))))),
+  index(1, index(1, index(1, index(1, index(1, index(1, index(1, q6())))))))
+)
+
+output observations() as pattern

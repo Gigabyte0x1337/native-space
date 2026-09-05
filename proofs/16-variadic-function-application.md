@@ -15,10 +15,10 @@ The argument list is dynamic in length. Each definition declares an exact
 arity or one final variadic parameter. Fixed-arity bodies reject invalid
 applications; variadic bodies accept one or more supplied functions.
 
-### T-FAPP-TRACE-1 -- variadic apply preserves operation order [Proved]
+### T-FAPP-TRACE-1 -- variadic derive-all preserves operation order [Proved]
 
 **Claim.** If each concrete `G_j` application emits finite trace `E_j`, then
-`apply(G_1, ..., G_n)` emits, in order,
+`derive_all(G_1, ..., G_n)` emits, in order,
 
 $$
 (\mathrm{call}G_1,E_1,\ldots,

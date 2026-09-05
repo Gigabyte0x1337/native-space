@@ -5,7 +5,7 @@
 let identity_orientation = () =>
 ORIENT(0)
 
-let apply = (functions...) =>
+let derive_all = (functions...) =>
 functions()
 
 let axis_add = (left, right) =>

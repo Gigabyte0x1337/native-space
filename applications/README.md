@@ -4,8 +4,10 @@
 
 Stage 8 asks whether Native Space is useful, not merely coherent. This directory
 contains application dossiers, their evaluation protocol, and a portfolio
-plan. The application claims are falsifiable research proposals; none is
-currently an observed gain.
+plan. Most application claims remain falsifiable research proposals. The
+matrix coefficient, finite SPH INDEX/coefficient-contraction, and fixed-graph
+Rust/Vulkan SPH experiments now have local observed results, each explicitly
+bounded to its implemented case.
 
 Each application separates three layers:
 
@@ -86,6 +88,8 @@ versioned and its round-trip or approximation error is tested.
 - [JEPA and diffusion dynamics](02-jepa-and-diffusion.md)
 - [Three-body and N-body mode strands](03-nbody-mode-strands.md)
 - [Navier–Stokes and turbulence](04-navier-stokes-turbulence.md)
+  - [interactive finite 3D SPH experiment](native-water/index.html)
+  - [native Rust/Vulkan benchmark record](native-water/native-benchmark-2026-08-29.txt)
 - [Protein folding and molecular dynamics](05-protein-folding-and-md.md)
 - [Impact ladder and portfolio gates](06-impact-and-priorities.md)
 - [Programming-language path](07-programming-language.md)

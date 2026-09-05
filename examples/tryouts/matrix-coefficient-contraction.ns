@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Exact test of coefficient contraction for two rank-one 2x2 matrices.
+#
+# A = u multiplied by v across its rows.
+# B = x multiplied by y across its rows.
+# Ordinary matrix multiplication repeats the same inner coefficient in every
+# output position. The contracted path computes it once and reuses it.
+
+let matrix = (a11, a12, a21, a22) =>
+add(index(2, a11), index(3, a12), index(4, a21), index(5, a22))
+
+let a11 = (value) => camera(2, 0, value)
+let a12 = (value) => camera(3, 0, value)
+let a21 = (value) => camera(4, 0, value)
+let a22 = (value) => camera(5, 0, value)
+
+let matrix_multiply = (left, right) =>
+matrix(
+  add(multiply(a11(left), a11(right)), multiply(a12(left), a21(right))),
+  add(multiply(a11(left), a12(right)), multiply(a12(left), a22(right))),
+  add(multiply(a21(left), a11(right)), multiply(a22(left), a21(right))),
+  add(multiply(a21(left), a12(right)), multiply(a22(left), a22(right)))
+)
+
+let outer = (u1, u2, v1, v2) =>
+matrix(
+  multiply(u1, v1), multiply(u1, v2),
+  multiply(u2, v1), multiply(u2, v2)
+)
+
+let left = outer(2, 3, 5, 7)
+let right = outer(11, 13, 17, 19)
+
+# The multiplication coefficient is 5*11 + 7*13 = 146.
+let coefficient = add(multiply(5, 11), multiply(7, 13))
+
+let ordinary = matrix_multiply(left, right)
+let contracted = matrix(
+  multiply(2, coefficient, 17),
+  multiply(2, coefficient, 19),
+  multiply(3, coefficient, 17),
+  multiply(3, coefficient, 19)
+)
+
+# Zero proves that all four indexed output coefficients are exactly equal.
+add(ordinary, orient(2, contracted)) = 0

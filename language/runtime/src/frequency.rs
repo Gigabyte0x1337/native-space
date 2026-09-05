@@ -443,7 +443,7 @@ mod tests {
     fn quarter_turn_sequence(sample_count: usize) -> NativeState {
         NativeState::from_terms((0..sample_count).map(|offset| {
             let direction = u64::try_from(offset + 1).expect("test sample index fits u64");
-            let turns = i64::try_from(offset).expect("test phase fits i64");
+            let turns = i64::try_from(offset % 4).expect("canonical test phase fits i64");
             (
                 MultiIndex::from_depths([(direction, 1)]).unwrap(),
                 NativeScalar::one().orient(turns),

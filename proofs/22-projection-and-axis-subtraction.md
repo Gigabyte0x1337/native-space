@@ -109,7 +109,7 @@ let p_minus_one = () =>
 ORIENT(2)
 
 let classical_four_projection = () =>
-apply(p_minus_i, p_i, p_one, p_minus_one)
+derive_all(p_minus_i, p_i, p_one, p_minus_one)
 ```
 
 For number-line gains $a_{-i},a_i,a_1,a_{-1}$, define

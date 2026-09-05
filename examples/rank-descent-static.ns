@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Static rank keeps one quarter of the channels. Agreement 0 makes this
+# deliberately lossy; the runtime report, not this output, measures agreement.
+
+let observations = () =>
+add(
+  index(1, 2),
+  index(2, 3),
+  index(3, 5),
+  index(4, 7),
+  index(5, 11),
+  index(6, 13),
+  index(7, 17),
+  index(8, 19),
+  index(9, 23)
+)
+
+output rank_descent(observations(), 1/4, 0) as pattern

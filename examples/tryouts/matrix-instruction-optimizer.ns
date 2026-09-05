@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Control: the current exact allowlist finds no shorter matrix-multiply graph.
+
+let matrix = (a11, a12, a21, a22) =>
+add(index(2, a11), index(3, a12), index(4, a21), index(5, a22))
+
+let a11 = (value) => camera(2, 0, value)
+let a12 = (value) => camera(3, 0, value)
+let a21 = (value) => camera(4, 0, value)
+let a22 = (value) => camera(5, 0, value)
+
+let matrix_multiply = (left, right) =>
+matrix(
+  add(multiply(a11(left), a11(right)), multiply(a12(left), a21(right))),
+  add(multiply(a11(left), a12(right)), multiply(a12(left), a22(right))),
+  add(multiply(a21(left), a11(right)), multiply(a22(left), a21(right))),
+  add(multiply(a21(left), a12(right)), multiply(a22(left), a22(right)))
+)
+
+# Equality means reconstruction is exact and the optimizer keeps the original
+# when no theorem-authorized rewrite reduces its instruction count.
+length(untrace(trace(matrix_multiply), 1)) = length(trace(matrix_multiply))
