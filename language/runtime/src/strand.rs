@@ -63,6 +63,8 @@ const FOLD: u64 = 19;
 const CAMERA: u64 = 20;
 const RANK_DESCENT: u64 = 21;
 const APPLY: u64 = 22;
+// Staged reflection expressions retain their source identity in traces.
+const REFLECT: u64 = 23;
 
 /// Maximum expression nesting decoded from one operation strand.
 ///
@@ -312,10 +314,10 @@ pub(crate) fn optimize_operation_strand(
 }
 
 #[derive(Debug)]
-struct DecodedStrand {
-    root: String,
-    encoded_source: String,
-    functions: Vec<Function>,
+pub(crate) struct DecodedStrand {
+    pub(crate) root: String,
+    pub(crate) encoded_source: String,
+    pub(crate) functions: Vec<Function>,
 }
 
 #[derive(Debug, Default)]
@@ -357,7 +359,7 @@ fn malformed_strand(source_name: &str, span: Option<Span>) -> LanguageError {
     )
 }
 
-fn decode_operation_strand(
+pub(crate) fn decode_operation_strand(
     state: &NativeState,
     source_name: &str,
     span: Option<Span>,
@@ -778,6 +780,23 @@ fn decode_expression(
                 span: coordinate.span,
             }
         }
+        REFLECT => {
+            let name = required_text(coordinate.name.as_deref(), source_name, span)?;
+            let operation = crate::reflection::Operation::from_name(name)
+                .ok_or_else(|| malformed_strand(source_name, span))?;
+            let arguments = children(
+                usize_or_zero(coordinate.number_a.as_deref(), source_name, span)?,
+                cursor,
+            )?;
+            if !operation.accepts(arguments.len()) {
+                return Err(malformed_strand(source_name, span));
+            }
+            Expr::Reflect {
+                operation,
+                arguments,
+                span: coordinate.span,
+            }
+        }
         APPLY => Expr::Apply {
             pattern: Box::new(child(cursor)?),
             position: required_u64(coordinate.number_a.as_deref(), source_name, span)?,
@@ -1037,6 +1056,19 @@ fn collect_expression(
             coordinate.number_c.clone_from(minimum_agreement);
             coordinates.push(coordinate);
             collect_expression(value, coordinates, called);
+        }
+        Expr::Reflect {
+            operation,
+            arguments,
+            span,
+        } => {
+            let mut coordinate = Coordinate::new(REFLECT, *span);
+            coordinate.name = Some(operation.name().into());
+            coordinate.number_a = Some(arguments.len().to_string());
+            coordinates.push(coordinate);
+            for argument in arguments {
+                collect_expression(argument, coordinates, called);
+            }
         }
         Expr::Apply {
             pattern,

@@ -266,9 +266,10 @@ fn rank_descent_agreement_is_an_exact_unit_ratio() {
 }
 
 #[test]
-fn apply_requires_rank_descent_and_a_positive_position() {
-    let wrong_pattern = parse_document("output apply(one, 1)", "wrong-apply.ns").unwrap_err();
-    assert_eq!(wrong_pattern.0.code, "NSP073");
+fn apply_validates_graph_values_and_requires_positive_sequence_positions() {
+    let document = parse_document("output apply(one, 1)", "wrong-apply.ns").unwrap();
+    let wrong_pattern = compile(&document).unwrap_err();
+    assert_eq!(wrong_pattern.0.code, "NSL001");
     assert!(wrong_pattern.0.span.is_some());
 
     let zero_position = parse_document(

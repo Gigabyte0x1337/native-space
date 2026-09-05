@@ -1,5 +1,10 @@
 # Exact instruction-strand optimization
 
+For user-authored transformations, [reflection](REFLECTION.md) separately
+provides `rewrite(graph, pattern, replacement)` and `apply(graph, inputs...)`.
+Unlike the theorem-backed `untrace` path below, an explicit rewrite makes no
+equivalence or shortening claim. Its rule and acceptance checks belong in source.
+
 ## Requirement
 
 An operation trace is already a native coordinate object. Calling

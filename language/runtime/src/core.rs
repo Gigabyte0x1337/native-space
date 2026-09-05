@@ -491,6 +491,11 @@ impl NativeState {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Expr {
+    Reflect {
+        operation: crate::reflection::Operation,
+        arguments: Vec<Expr>,
+        span: Option<Span>,
+    },
     Zero {
         span: Option<Span>,
     },
@@ -582,6 +587,7 @@ impl Expr {
     pub const fn span(&self) -> Option<Span> {
         match self {
             Self::Zero { span }
+            | Self::Reflect { span, .. }
             | Self::One { span }
             | Self::Scalar { span, .. }
             | Self::Reference { span, .. }
@@ -702,6 +708,7 @@ pub(crate) const LANGUAGE_NAMESPACE: &[(&str, LanguageNameKind)] = &[
     ("untrace", LanguageNameKind::ExactGrammar),
     ("rank_descent", LanguageNameKind::ExactGrammar),
     ("apply", LanguageNameKind::ExactGrammar),
+    ("rewrite", LanguageNameKind::ExactGrammar),
     ("concat", LanguageNameKind::ExactGrammar),
     ("fold", LanguageNameKind::ExactGrammar),
     ("camera", LanguageNameKind::ExactGrammar),
@@ -1459,6 +1466,12 @@ impl Parser {
                     "expected ',' after index direction",
                 )?;
                 let value = Box::new(self.expression()?);
+                let multiplicity = if self.current().kind == TokenKind::Comma {
+                    self.advance();
+                    self.positive("NST003", "index multiplicity must be a positive integer")?
+                } else {
+                    1
+                };
                 let end = self.expect(
                     TokenKind::RParen,
                     "NSP020",
@@ -1466,7 +1479,7 @@ impl Parser {
                 )?;
                 Ok(Expr::Index {
                     direction,
-                    multiplicity: 1,
+                    multiplicity,
                     value,
                     span: Some(start.span.join(end.span)),
                 })
@@ -1656,16 +1669,51 @@ impl Parser {
                     span: Some(start.span.join(end.span)),
                 })
             }
+            "rewrite" => {
+                self.expect(TokenKind::LParen, "NSP075", "expected '(' after rewrite")?;
+                let mut arguments = vec![self.expression()?];
+                while self.current().kind == TokenKind::Comma {
+                    self.advance();
+                    arguments.push(self.expression()?);
+                }
+                let end = self.expect(
+                    TokenKind::RParen,
+                    "NSP075",
+                    "expected ')' after rewrite arguments",
+                )?;
+                if arguments.len() != 3 {
+                    return Err(fail(
+                        "NSP075",
+                        "rewrite expects graph, pattern, and replacement",
+                        &self.source_name,
+                        Some(start.span),
+                    ));
+                }
+                Ok(Expr::Reflect {
+                    operation: crate::reflection::Operation::Rewrite,
+                    arguments,
+                    span: Some(start.span.join(end.span)),
+                })
+            }
             "apply" => {
                 self.expect(TokenKind::LParen, "NSP070", "expected '(' after 'apply'")?;
                 let pattern = Box::new(self.expression()?);
                 if !matches!(pattern.as_ref(), Expr::RankDescent { .. }) {
-                    return Err(fail(
-                        "NSP073",
-                        "apply expects rank_descent(...) as its first argument",
-                        &self.source_name,
-                        pattern.span(),
-                    ));
+                    let mut arguments = vec![*pattern];
+                    while self.current().kind == TokenKind::Comma {
+                        self.advance();
+                        arguments.push(self.expression()?);
+                    }
+                    let end = self.expect(
+                        TokenKind::RParen,
+                        "NSP071",
+                        "expected ')' after apply arguments",
+                    )?;
+                    return Ok(Expr::Reflect {
+                        operation: crate::reflection::Operation::Apply,
+                        arguments,
+                        span: Some(start.span.join(end.span)),
+                    });
                 }
                 self.expect(
                     TokenKind::Comma,
@@ -1758,17 +1806,30 @@ impl Parser {
         Ok(value)
     }
     fn positive(&mut self, code: &str, message: &str) -> Result<u64, LanguageError> {
-        let value = self.integer(code, message, true)?;
-        u64::try_from(value).map_err(|_conversion_error| {
-            fail(code, message, &self.source_name, Some(self.current().span))
-        })
+        self.unsigned(code, message, true)
     }
 
     fn nonnegative(&mut self, code: &str, message: &str) -> Result<u64, LanguageError> {
-        let value = self.integer(code, message, false)?;
-        u64::try_from(value).map_err(|_conversion_error| {
-            fail(code, message, &self.source_name, Some(self.current().span))
-        })
+        self.unsigned(code, message, false)
+    }
+
+    fn unsigned(
+        &mut self,
+        code: &str,
+        message: &str,
+        positive: bool,
+    ) -> Result<u64, LanguageError> {
+        // Directions/depths use the same unsigned carrier as native states.
+        // Parsing through i64 made the runtime's own trace coordinates unreadable.
+        let token = self.expect(TokenKind::Number, code, message)?;
+        let value = token
+            .text
+            .parse::<u64>()
+            .map_err(|_parse_error| fail(code, message, &self.source_name, Some(token.span)))?;
+        if positive && value == 0 {
+            return Err(fail(code, message, &self.source_name, Some(token.span)));
+        }
+        Ok(value)
     }
 
     fn unit_ratio(&mut self, code: &str, message: &str) -> Result<String, LanguageError> {
@@ -2207,6 +2268,18 @@ fn analyze_expr(
                 );
             }
         }
+        Expr::Reflect {
+            operation,
+            arguments,
+            span,
+        } => {
+            if !operation.accepts(arguments.len()) {
+                out.push(fail("NSR001", "invalid reflection argument count", source, *span).0);
+            }
+            arguments
+                .iter()
+                .for_each(|item| analyze_expr(item, names, functions, source, out, true));
+        }
         Expr::Add { operands, .. } | Expr::Multiply { operands, .. } => operands
             .iter()
             .for_each(|item| analyze_expr(item, names, functions, source, out, true)),
@@ -2275,6 +2348,11 @@ fn analyze_expr(
 
 fn expression_calls<'a>(expr: &'a Expr, calls: &mut Vec<(&'a str, Option<Span>)>) {
     match expr {
+        Expr::Reflect { arguments, .. } => {
+            arguments
+                .iter()
+                .for_each(|argument| expression_calls(argument, calls));
+        }
         Expr::Call {
             function,
             arguments,
@@ -2516,7 +2594,7 @@ pub fn analyze(program: &Program) -> Vec<Diagnostic> {
     );
     out
 }
-fn validate(program: &Program) -> Result<(), LanguageError> {
+pub(crate) fn validate(program: &Program) -> Result<(), LanguageError> {
     analyze(program)
         .into_iter()
         .next()
@@ -2804,6 +2882,14 @@ fn evaluate(
     source: &str,
 ) -> Result<NativeState, LanguageError> {
     match expr {
+        Expr::Reflect {
+            operation,
+            arguments,
+            span,
+        } => {
+            let values = evaluate_list(arguments, env, functions, active, source)?;
+            crate::reflection::evaluate(*operation, &values, source, *span)
+        }
         Expr::Zero { .. } => Ok(NativeState::zero()),
         Expr::One { .. } => Ok(NativeState::one()),
         Expr::Scalar { real, imag, span } => Ok(NativeState::scalar(
@@ -3148,6 +3234,19 @@ pub(crate) fn expanded_source(program: &Program) -> Result<String, LanguageError
 
 pub(crate) fn expression_source(expression: &Expr) -> String {
     match expression {
+        Expr::Reflect {
+            operation,
+            arguments,
+            ..
+        } => format!(
+            "{}({})",
+            operation.name(),
+            arguments
+                .iter()
+                .map(expression_source)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Expr::Zero { .. } => "zero".into(),
         Expr::One { .. } => "one".into(),
         Expr::Scalar { real, imag, .. } if imag == "0" => real.clone(),
@@ -3211,11 +3310,16 @@ pub(crate) fn expression_source(expression: &Expr) -> String {
             value,
             ..
         } => {
-            let mut source = expression_source(value);
-            for _ in 0..*multiplicity {
-                source = format!("index({direction}, {source})");
+            if *multiplicity == 1 {
+                format!("index({direction}, {})", expression_source(value))
+            } else if *multiplicity == 0 {
+                expression_source(value)
+            } else {
+                format!(
+                    "index({direction}, {}, {multiplicity})",
+                    expression_source(value)
+                )
             }
-            source
         }
     }
 }
@@ -3369,6 +3473,15 @@ fn expand_expr(
     source: &str,
 ) -> Result<Expr, LanguageError> {
     match expr {
+        Expr::Reflect {
+            operation,
+            arguments,
+            span,
+        } => Ok(Expr::Reflect {
+            operation: *operation,
+            arguments: expand_list(arguments, functions, parameters, active, source)?,
+            span: *span,
+        }),
         Expr::Reference { name, span } if parameters.contains_key(name) => {
             match &parameters[name] {
                 ExprBinding::Value(value) => Ok(value.clone()),
@@ -3575,12 +3688,55 @@ fn lower_reflective_expressions(program: &Program) -> Result<Program, LanguageEr
     })
 }
 
+fn lower_graph_operation(
+    operation: crate::reflection::Operation,
+    arguments: &[Expr],
+    span: Option<Span>,
+    env: &BTreeMap<String, ExactBinding>,
+    source: &str,
+) -> Result<Expr, LanguageError> {
+    let arguments = arguments
+        .iter()
+        .map(|argument| lower_reflective_expr(argument, env, source))
+        .collect::<Result<Vec<_>, _>>()?;
+    let graph = arguments
+        .first()
+        .ok_or_else(|| fail("NSR001", "reflection requires a graph", source, span))?;
+    let state = evaluate(graph, env, &BTreeMap::new(), &mut Vec::new(), source)?;
+    if operation == crate::reflection::Operation::Apply {
+        let (functions, root) = crate::reflection::application_graph(&state, source, span)?;
+        let catalog = functions.iter().map(|f| (f.name.clone(), f)).collect();
+        let call = Expr::Call {
+            function: root,
+            arguments: arguments[1..].to_vec(),
+            span,
+        };
+        let expanded = expand_expr(&call, &catalog, &BTreeMap::new(), &mut Vec::new(), source)?;
+        lower_reflective_expr(&expanded, env, source)
+    } else {
+        let values = arguments
+            .iter()
+            .map(|argument| evaluate(argument, env, &BTreeMap::new(), &mut Vec::new(), source))
+            .collect::<Result<Vec<_>, _>>()?;
+        crate::reflection::rewrite(&values, source, span)
+    }
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "one exhaustive staging match keeps core lowering behavior auditable"
+)]
 fn lower_reflective_expr(
     expr: &Expr,
     env: &BTreeMap<String, ExactBinding>,
     source: &str,
 ) -> Result<Expr, LanguageError> {
     match expr {
+        Expr::Reflect {
+            operation,
+            arguments,
+            span,
+        } => lower_graph_operation(*operation, arguments, *span, env, source),
         Expr::Length { value, span } => {
             let value = lower_reflective_expr(value, env, source)?;
             let strand = evaluate(&value, env, &BTreeMap::new(), &mut Vec::new(), source)?;
@@ -3874,6 +4030,11 @@ fn event(events: &mut Vec<RewriteEvent>, rule: &str, theorems: &[&str], span: Op
     reason = "one exhaustive match keeps every authorized rewrite visible"
 )]
 fn optimize_expr(expr: &Expr, events: &mut Vec<RewriteEvent>) -> Expr {
+    // Reflection arguments describe syntax. Ordinary value rewrites must not
+    // alter their rule templates before the explicit reflection stage.
+    if matches!(expr, Expr::Reflect { .. }) {
+        return expr.clone();
+    }
     match expr {
         Expr::Add { operands, span } => {
             let optimized: Vec<_> = operands.iter().map(|x| optimize_expr(x, events)).collect();

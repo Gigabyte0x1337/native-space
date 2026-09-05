@@ -169,7 +169,7 @@ impl Compiler {
                 )
             }
             Expr::Call { .. } => unreachable!("calls are erased before bytecode generation"),
-            Expr::Trace { .. } => {
+            Expr::Reflect { .. } | Expr::Trace { .. } => {
                 unreachable!("trace is lowered before bytecode generation")
             }
             Expr::Length { .. } => {

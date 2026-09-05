@@ -6,6 +6,14 @@ Native Space uses one `.ns` extension for several document kinds. The command
 matters: an output evaluates a state, a zero or Boolean proof checks one closed
 finite statement, and a function library only exposes a derivation graph.
 
+The complete [reflection matrix example](examples/reflection-matrix.ns) defines
+its own rewrite rule, transforms a trace, and executes the rebuilt graph:
+`run examples/reflection-matrix.ns`. Its
+[symbolic zero proof](examples/reflection-matrix-proof.ns) is checked with
+`check examples/reflection-matrix-proof.ns`. The output is the matrix
+`[[20, 24], [32, 36]]`; the rule reduces arithmetic, but no runtime speedup
+is claimed. See the [reflection contract](language/REFLECTION.md).
+
 Prepend each command below with:
 
 ```powershell

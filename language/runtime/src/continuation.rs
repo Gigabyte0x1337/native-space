@@ -1525,7 +1525,7 @@ mod tests {
                 .source()
                 .contains("add(previous_1, previous_2)")
         );
-        assert!(continuation.source().contains("index(1, index(1, 2))"));
+        assert!(continuation.source().contains("index(1, 2, 2)"));
         let program = parse(continuation.source(), "vector-model.ns").unwrap();
         assert!(crate::strand::is_operation_strand(
             &interpret(&program).unwrap()

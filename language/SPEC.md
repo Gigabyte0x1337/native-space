@@ -33,13 +33,14 @@ it is not accepted as a mathematical proof merely because it parses.
 The exact expression forms are numbers, UTF-8 strings, references, calls,
 `trace(function)`, `length(operation_strand)`,
 `untrace(value[, rank])`, `rank_descent(value[, target_rank[, minimum_agreement]])`, `apply(rank_descent(...), position)`, derived `concat`, finite `fold`, the
-indexed `camera`, and the four operations:
+indexed `camera`, source-defined graph `rewrite`, graph `apply`, and the four operations:
 
 ```text
 add(a, b, ...)
 multiply(a, b, ...)
 orient(turns, value)
 index(direction, value)
+index(direction, value, positive_depth)
 ```
 
 `orient` accepts only the canonical turns `0`, `1`, `2`, and `3`. Four turns
@@ -308,12 +309,21 @@ One selected pattern can be replayed at a positive one-based position:
 output apply(rank_descent(observations()), 13) as number
 ```
 
-`apply` currently requires a direct `rank_descent(...)` first argument. It
-returns the complete generated native state at that position. Positions within
+With a direct `rank_descent(...)` first argument, `apply` returns the complete
+generated native state at that positive position. Positions within
 the data-sized rank-one reference inherit exact finite equality only when
 minimum agreement is one. A lower threshold is a measured lossy replay. Later
 positions are deterministic extrapolations and carry no new correctness claim.
 Pattern application is staged and leaves no bytecode opcode.
+
+With a canonical operation strand as its first argument,
+`apply(graph, arguments...)` executes the graph's root function.
+`rewrite(graph, pattern, replacement)` performs one bottom-up structural pass;
+rule-root parameters bind matching subexpressions, including repeated-input
+constraints. Both rules are ordinary traced source functions. Rewriting
+constructs a candidate; it does not prove equivalence or lower cost.
+See [Reflection](REFLECTION.md) for validation, collision handling, finite
+execution boundaries, and the complete matrix example.
 
 The same generated state may be viewed through the exact 3D cone output camera:
 
@@ -359,7 +369,7 @@ operators, bindings, function parameters, and Boolean parameters:
 | Namespace class | Language-owned names |
 |---|---|
 | Core operations | `add`, `multiply`, `orient`, `index`, `ADD`, `MULTIPLY`, `ORIENT`, `INDEX` |
-| Exact grammar | `zero`, `one`, `scalar`, `trace`, `length`, `untrace`, `rank_descent`, `apply`, `concat`, `fold`, `camera`, `let`, `output`, `as`, `operator`, `import`, `string`, `number`, `vector`, `pattern`, `boolean`, `=>`, `=` |
+| Exact grammar | `zero`, `one`, `scalar`, `trace`, `length`, `untrace`, `rank_descent`, `apply`, `rewrite`, `concat`, `fold`, `camera`, `let`, `output`, `as`, `operator`, `import`, `string`, `number`, `vector`, `pattern`, `boolean`, `=>`, `=` |
 | Function grammar | `...` |
 | Boolean grammar | `parameter`, `bool`, `prove`, `by`, `truth_table`, `true`, `false`, `not`, `and`, `or`, `xor`, `implies`, `iff` |
 

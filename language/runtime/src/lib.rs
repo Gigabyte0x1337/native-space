@@ -19,6 +19,7 @@ pub mod gpu;
 pub mod logic;
 pub mod rank_descent;
 pub mod rank_policy;
+pub mod reflection;
 pub mod strand;
 
 pub const LANGUAGE_VERSION: &str = "1.0";
