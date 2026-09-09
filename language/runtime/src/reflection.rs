@@ -177,47 +177,6 @@ pub(crate) fn application_graph(
     Ok((graph.functions, graph.root))
 }
 
-pub(crate) fn evaluate(
-    operation: Operation,
-    arguments: &[NativeState],
-    source: &str,
-    span: Option<Span>,
-) -> Result<NativeState, LanguageError> {
-    if !operation.accepts(arguments.len()) {
-        return Err(error("invalid reflection argument count", source, span));
-    }
-    match operation {
-        Operation::Rewrite => {
-            let expr = rewrite(arguments, source, span)?;
-            core::interpret(&Program {
-                functions: Vec::new(),
-                bindings: Vec::new(),
-                result: expr,
-                goal: Goal::Emit,
-                output_kind: OutputKind::Pattern,
-                source_name: source.into(),
-                span,
-            })
-        }
-        Operation::Apply => {
-            let (functions, root) = application_graph(&arguments[0], source, span)?;
-            let graph = Program {
-                functions,
-                bindings: Vec::new(),
-                result: Expr::Trace {
-                    function: root.clone(),
-                    span,
-                },
-                goal: Goal::Emit,
-                output_kind: OutputKind::Pattern,
-                source_name: source.into(),
-                span,
-            };
-            core::exact_function(&graph, &root)?.apply(&arguments[1..])
-        }
-    }
-}
-
 pub(crate) fn rewrite(
     arguments: &[NativeState],
     source: &str,
@@ -497,7 +456,7 @@ fn span_mut(expr: &mut Expr) -> &mut Option<Span> {
         | Expr::Reflect { span, .. }
         | Expr::Add { span, .. }
         | Expr::Multiply { span, .. }
-        | Expr::Orient { span, .. }
+        | Expr::Phase { span, .. }
         | Expr::Index { span, .. } => span,
     }
 }
@@ -518,7 +477,7 @@ fn children(expr: &Expr) -> Vec<&Expr> {
         | Expr::Length { value, .. }
         | Expr::Untrace { value, .. }
         | Expr::RankDescent { value, .. }
-        | Expr::Orient { value, .. }
+        | Expr::Phase { value, .. }
         | Expr::Index { value, .. } => vec![value],
         Expr::Apply { pattern, .. } => vec![pattern],
         Expr::Zero { .. }
@@ -548,7 +507,7 @@ fn children_mut(expr: &mut Expr) -> Vec<&mut Expr> {
         | Expr::Length { value, .. }
         | Expr::Untrace { value, .. }
         | Expr::RankDescent { value, .. }
-        | Expr::Orient { value, .. }
+        | Expr::Phase { value, .. }
         | Expr::Index { value, .. } => vec![value],
         Expr::Apply { pattern, .. } => vec![pattern],
         Expr::Zero { .. }
@@ -612,7 +571,7 @@ mod tests {
     fn oversized_replacement_depth_is_rejected_before_another_pass() {
         let mut expression = Expr::One { span: None };
         for _ in 0..=MAX_DEPTH {
-            expression = Expr::Orient {
+            expression = Expr::Phase {
                 turns: 1,
                 value: Box::new(expression),
                 span: None,

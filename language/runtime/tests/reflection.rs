@@ -147,7 +147,7 @@ fn no_match_preserves_trace_and_nested_matches_are_bottom_up() {
         run(&format!(
             "{RULE}
 let f = (x) => index(5, x)
-output add(rewrite(trace(f), trace(before), trace(after)), orient(2, trace(f)))"
+output add(rewrite(trace(f), trace(before), trace(after)), phase(2, trace(f)))"
         ))
         .is_zero()
     );
@@ -241,12 +241,12 @@ fn matrix_rewrite_matches_numeric_and_symbolic_products() {
 let sa = matrix(index(101, one), index(102, one), index(103, one), index(104, one))
 let sb = matrix(index(111, one), index(112, one), index(113, one), index(114, one))
 let sx = matrix(index(121, one), index(122, one), index(123, one), index(124, one))
-output add(apply(improved, sa, sb, sx), orient(2, apply(original, sa, sb, sx)))",
+output add(apply(improved, sa, sb, sx), phase(2, apply(original, sa, sb, sx)))",
     );
     assert!(run(&symbolic).is_zero());
     let length = example.replace(
         output,
-        "output add(length(original), orient(2, index(1, index(1, length(improved)))))",
+        "output add(length(original), phase(2, index(1, index(1, length(improved)))))",
     );
     assert!(run(&length).is_zero());
 }
@@ -262,13 +262,15 @@ output apply(rewrite(trace(f), trace(before), trace(after)), 7)"
     )
     .unwrap();
     let code = bytecode::compile(&program).unwrap();
-    assert_eq!(
-        code.instructions
-            .iter()
-            .filter(|i| i.opcode == bytecode::Opcode::Multiply)
-            .count(),
-        1
-    );
+    // The rebuilt result is a product, not the constant 35. Counting all VM
+    // instructions would also count identities and retained source graphs.
+    let state = bytecode::execute_retained(&code).unwrap();
+    let data = state.native_data();
+    let root = usize::try_from(data["root"].as_u64().unwrap()).unwrap();
+    assert_eq!(data["nodes"][root]["operator"]["operation"], "multiply");
+    assert_eq!(state.inputs()[0].project(), &run("output 5"));
+    assert_eq!(state.inputs()[1].project(), &run("output 7"));
+    assert!(!state.retained_inputs().is_empty());
     assert_eq!(bytecode::execute(&code).unwrap(), run("output 35"));
     assert!(matches!(program.result, Expr::Reflect { .. }));
 }

@@ -1,5 +1,5 @@
 # Matrix/operator witness: one exact instance of native distributivity.
-# Subtraction is ADD with a two-turn ORIENT.
+# Subtraction is ADD with a two-turn PHASE.
 let matrix_operator = index(1, scalar(2, 1))
 let left_input = index(2, scalar(3, -1))
 let right_input = index(3, scalar(-1, 2))
@@ -8,4 +8,4 @@ let separated = add(
     multiply(matrix_operator, left_input),
     multiply(matrix_operator, right_input)
 )
-add(combined, orient(2, separated)) = 0
+add(combined, phase(2, separated)) = 0

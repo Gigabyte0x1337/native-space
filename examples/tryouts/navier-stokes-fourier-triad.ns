@@ -15,7 +15,7 @@ add(multiply(x(left), x(right)), multiply(y(left), y(right)))
 let scale = (coefficient, value) =>
 plane(multiply(coefficient, x(value)), multiply(coefficient, y(value)))
 
-let subtract = (left, right) => add(left, orient(2, right))
+let subtract = (left, right) => add(left, phase(2, right))
 
 let leray = (wavevector, inverse_squared_size, value) =>
 subtract(
@@ -30,10 +30,10 @@ let k = plane(2, 1)
 
 # u_p = (0,2) and u_q = (3,-3) are perpendicular to p and q.
 let u_p = plane(0, 2)
-let u_q = plane(3, orient(2, 3))
+let u_q = plane(3, phase(2, 3))
 
 # The target velocity u_k = (4,-8) is perpendicular to k.
-let u_k = plane(4, orient(2, 8))
+let u_k = plane(4, phase(2, 8))
 
 # Ordinary ordered quadratic interaction for the selected p+q=k pair:
 # (u_p dot q)u_q + (u_q dot p)u_p.
@@ -50,8 +50,8 @@ let projected_interaction = leray(k, 1/5, contracted_interaction)
 
 # One Fourier-space mode derivative:
 # -i*P_k(interaction) - viscosity*|k|^2*u_k, with viscosity = 1/10.
-let nonlinear_derivative = orient(3, projected_interaction)
-let viscous_coefficient = orient(2, multiply(1/10, 5))
+let nonlinear_derivative = phase(3, projected_interaction)
+let viscous_coefficient = phase(2, multiply(1/10, 5))
 let viscous_derivative = scale(viscous_coefficient, u_k)
 let mode_derivative = add(nonlinear_derivative, viscous_derivative)
 
@@ -66,8 +66,8 @@ add(
   index(100, dot(p, u_p)),
   index(101, dot(q, u_q)),
   index(102, dot(k, u_k)),
-  index(103, add(multiplication_coefficient, orient(2, 6))),
-  index(104, add(ordinary_interaction, orient(2, contracted_interaction))),
+  index(103, add(multiplication_coefficient, phase(2, 6))),
+  index(104, add(ordinary_interaction, phase(2, contracted_interaction))),
   index(105, dot(k, projected_interaction)),
   index(106, dot(k, mode_derivative))
 ) = 0

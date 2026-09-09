@@ -18,11 +18,11 @@ let pi = () =>
 INDEX()
 ADD()
 
-let birth_orient = () =>
-ORIENT("k mod 4")
+let birth_phase = () =>
+PHASE("k mod 4")
 
 let classic_p = () =>
-ORIENT(0)
+PHASE(0)
 
 # The classical source number line has one coordinate. A later camera may
 # zero-fill absent coordinates, but they are not additional source axes.
@@ -30,7 +30,7 @@ let classical_source_axis = () =>
 classic_p()
 
 let classic_i = () =>
-ORIENT(1)
+PHASE(1)
 
 # Half of the multiplicative identity is the unique center of
 # the reflection sigma -> 1 - sigma.
@@ -42,16 +42,16 @@ let centered_re_perspective = () =>
 axis_subtract(classic_p, exact_half)
 
 let p_minus_i = () =>
-ORIENT(3)
+PHASE(3)
 
 let p_i = () =>
-ORIENT(1)
+PHASE(1)
 
 let p_one = () =>
-ORIENT(0)
+PHASE(0)
 
 let p_minus_one = () =>
-ORIENT(2)
+PHASE(2)
 
 let classical_four_projection = () =>
 derive_all(p_minus_i, p_i, p_one, p_minus_one)
@@ -62,8 +62,8 @@ ADD()
 ADD()
 
 let opposite_birth_pair = () =>
-birth_orient()
-ORIENT(2)
+birth_phase()
+PHASE(2)
 MULTIPLY()
 ADD()
 
@@ -86,7 +86,7 @@ ADD()
 let native_derivative_rules = () =>
 ADD()
 MULTIPLY()
-ORIENT("symbolic derivative turn")
+PHASE("symbolic derivative turn")
 INDEX()
 
 let exp_angle_flow = () =>
@@ -99,7 +99,7 @@ derive_all(geometric_series, binomial_expand, finite_fourier, native_derivative_
 let classical_model = () =>
 ADD()
 MULTIPLY()
-ORIENT("symbolic model turn")
+PHASE("symbolic model turn")
 INDEX()
 
 let zeta_pattern = () =>
@@ -127,7 +127,7 @@ let zeta_pair_camera = () =>
 zeta_pattern()
 prime_log_character()
 INDEX()
-ORIENT("even observation half-turn")
+PHASE("even observation half-turn")
 ADD()
 
 let euler_product = () =>
@@ -162,7 +162,7 @@ classical_perspective(centered_re_pattern)
 
 let prime_pattern = () =>
 prime_birth()
-birth_orient()
+birth_phase()
 MULTIPLY()
 
 let remove_prime_log_phase = () =>

@@ -8,5 +8,5 @@ import "math-functions.ns"
 let dual_alignment_example = () =>
 prime_axis()
 reflected_prime_axis()
-ORIENT(2)
+PHASE(2)
 ADD()

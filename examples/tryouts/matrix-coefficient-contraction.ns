@@ -43,4 +43,4 @@ let contracted = matrix(
 )
 
 # Zero proves that all four indexed output coefficients are exactly equal.
-add(ordinary, orient(2, contracted)) = 0
+add(ordinary, phase(2, contracted)) = 0

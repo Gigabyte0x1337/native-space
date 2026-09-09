@@ -12,4 +12,4 @@ let reconstructed = add(
     index(1001, "l\u0065t"),
     index(1002, "answer")
 )
-add(source_node, orient(2, reconstructed)) = 0
+add(source_node, phase(2, reconstructed)) = 0

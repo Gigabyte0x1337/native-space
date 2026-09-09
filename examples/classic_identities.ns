@@ -28,17 +28,17 @@ let binomial_residual = add(
   multiply(minus_one, binomial_right)
 )
 
-# Native four-orientation identity: 1 + J - 1 - J = 0.
-let orientation_residual = add(
+# Native four-phase identity: 1 + J - 1 - J = 0.
+let phase_residual = add(
   one,
-  orient(1, one),
-  orient(2, one),
-  orient(3, one)
+  phase(1, one),
+  phase(2, one),
+  phase(3, one)
 )
 
 # Distinct tags prevent one failed identity from cancelling another.
 output add(
   index(10, geometric_residual),
   index(11, binomial_residual),
-  index(12, orientation_residual)
+  index(12, phase_residual)
 )

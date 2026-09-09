@@ -5,7 +5,7 @@
 //!
 //! A trace is a reflective camera, not a fifth algebra operation. Every
 //! returned strand is an expression containing only exact constants, ADD,
-//! ORIENT, and INDEX. A node stores its instruction under the head coordinate
+//! PHASE, and INDEX. A node stores its instruction under the head coordinate
 //! and stores the remainder of the strand under the continuation coordinate.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,7 +15,7 @@ use num_traits::{One as _, ToPrimitive as _, Zero as _};
 
 use crate::core::{
     Diagnostic, Expr, Function, Goal, LanguageError, NativeScalar, NativeState, OutputKind,
-    Program, Span, is_canonical_orientation,
+    Program, Span, is_canonical_phase,
 };
 
 /// Version of the native operation-strand coordinate layout.
@@ -52,7 +52,7 @@ const REFERENCE: u64 = 8;
 const CALL: u64 = 9;
 const ADD: u64 = 10;
 const MULTIPLY: u64 = 11;
-const ORIENT: u64 = 12;
+const PHASE: u64 = 12;
 const INDEX: u64 = 13;
 const TRACE: u64 = 14;
 const UNTRACE: u64 = 15;
@@ -418,7 +418,7 @@ fn decode_coordinate_term(
                 )?;
             }
             OPCODE_DIRECTION => {
-                // The opcode orientation is redundant with the exact kind and
+                // The opcode phase is redundant with the exact kind and
                 // is validated by reconstruction rather than used as control.
                 if coefficient.is_zero() {
                     return Err(malformed());
@@ -848,12 +848,12 @@ fn decode_expression(
             )?,
             span: coordinate.span,
         },
-        ORIENT => {
+        PHASE => {
             let turns = i64_or_zero(coordinate.number_a.as_deref(), source_name, span)?;
-            if !is_canonical_orientation(turns) {
+            if !is_canonical_phase(turns) {
                 return Err(malformed_strand(source_name, span));
             }
-            Expr::Orient {
+            Expr::Phase {
                 turns,
                 value: Box::new(child(cursor)?),
                 span: coordinate.span,
@@ -1153,8 +1153,8 @@ fn collect_expression(
                 collect_expression(operand, coordinates, called);
             }
         }
-        Expr::Orient { turns, value, span } => {
-            let mut coordinate = Coordinate::new(ORIENT, *span);
+        Expr::Phase { turns, value, span } => {
+            let mut coordinate = Coordinate::new(PHASE, *span);
             coordinate.opcode_turn = Some(2);
             coordinate.number_a = Some(turns.to_string());
             coordinates.push(coordinate);
@@ -1203,7 +1203,7 @@ fn coordinate_expression(coordinate: Coordinate) -> Expr {
     if let Some(turns) = coordinate.opcode_turn {
         fields.push(indexed(
             OPCODE_DIRECTION,
-            Expr::Orient {
+            Expr::Phase {
                 turns,
                 value: Box::new(Expr::One { span: None }),
                 span: None,
@@ -1288,10 +1288,10 @@ mod tests {
     use crate::core::{interpret, parse};
 
     #[test]
-    fn strand_decoder_rejects_noncanonical_orientation() {
-        let mut orientation = Coordinate::new(ORIENT, None);
-        orientation.number_a = Some("4".into());
-        let coordinates = [orientation, Coordinate::new(ONE, None)];
+    fn strand_decoder_rejects_noncanonical_phase() {
+        let mut phase = Coordinate::new(PHASE, None);
+        phase.number_a = Some("4".into());
+        let coordinates = [phase, Coordinate::new(ONE, None)];
         let mut cursor = 0;
 
         let error = decode_expression(&coordinates, &mut cursor, 0, "strand.ns", None).unwrap_err();
@@ -1301,12 +1301,12 @@ mod tests {
     #[test]
     fn trace_is_a_nested_coordinate_strand_and_preserves_distinct_programs() {
         let first = parse(
-            "let sample = (x) => add(x, orient(1, x))\noutput trace(sample) as pattern",
+            "let sample = (x) => add(x, phase(1, x))\noutput trace(sample) as pattern",
             "first.ns",
         )
         .unwrap();
         let second = parse(
-            "let sample = (x) => multiply(x, orient(1, x))\noutput trace(sample) as pattern",
+            "let sample = (x) => multiply(x, phase(1, x))\noutput trace(sample) as pattern",
             "second.ns",
         )
         .unwrap();
@@ -1339,7 +1339,7 @@ mod tests {
     #[test]
     fn trace_is_pure_across_distinct_call_locations() {
         let program = parse(
-            "let sample = (x) => orient(1, x)\ntrace(sample) = trace(sample)",
+            "let sample = (x) => phase(1, x)\ntrace(sample) = trace(sample)",
             "pure-trace.ns",
         )
         .unwrap();
@@ -1651,7 +1651,7 @@ mod tests {
     #[test]
     fn traced_recursion_is_finite_but_executed_recursion_is_rejected() {
         let traced = parse(
-            "let repeat = (x) => repeat(orient(1, x))\noutput trace(repeat) as pattern",
+            "let repeat = (x) => repeat(phase(1, x))\noutput trace(repeat) as pattern",
             "traced.ns",
         )
         .unwrap();
@@ -1661,7 +1661,7 @@ mod tests {
         assert_eq!(crate::bytecode::execute(&bytecode).unwrap(), direct);
 
         let executed = parse(
-            "let repeat = (x) => repeat(orient(1, x))\noutput repeat(one)",
+            "let repeat = (x) => repeat(phase(1, x))\noutput repeat(one)",
             "executed.ns",
         )
         .unwrap();

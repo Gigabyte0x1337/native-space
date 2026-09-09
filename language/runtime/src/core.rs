@@ -17,10 +17,10 @@ pub const FLAT_STACK_CAMERA: &str = "flat-stack-v1";
 pub const AST_SCHEMA_VERSION: u64 = 1;
 pub const UTF8_BYTE_DIRECTION_MAX: u64 = 256;
 pub const UTF8_POSITION_DIRECTION_START: u64 = UTF8_BYTE_DIRECTION_MAX + 1;
-const MAX_CANONICAL_ORIENTATION: i64 = 3;
+const MAX_CANONICAL_PHASE: i64 = 3;
 
-pub(crate) fn is_canonical_orientation(turns: i64) -> bool {
-    (0..=MAX_CANONICAL_ORIENTATION).contains(&turns)
+pub(crate) fn is_canonical_phase(turns: i64) -> bool {
+    (0..=MAX_CANONICAL_PHASE).contains(&turns)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -106,7 +106,7 @@ pub fn rational(text: &str) -> Result<Rational, String> {
     Ok(BigRational::new(numerator, denominator))
 }
 
-fn rational_text(value: &Rational) -> String {
+pub(crate) fn rational_text(value: &Rational) -> String {
     if value.denom().is_one() {
         value.numer().to_string()
     } else {
@@ -178,9 +178,9 @@ impl NativeScalar {
             imag: &self.real * &other.imag + &self.imag * &other.real,
         }
     }
-    /// Apply one canonical native orientation.
+    /// Apply one canonical native phase.
     ///
-    /// The implementation derives orientation from repeated multiplication by
+    /// The implementation derives phase from repeated multiplication by
     /// the native quarter-turn value instead of reducing an arbitrary count.
     ///
     /// # Panics
@@ -189,17 +189,17 @@ impl NativeScalar {
     /// three. Text, AST, strand, and bytecode inputs reject that condition with
     /// a diagnostic before reaching this method.
     #[must_use]
-    pub fn orient(&self, turns: i64) -> Self {
+    pub fn phase(&self, turns: i64) -> Self {
         assert!(
-            is_canonical_orientation(turns),
-            "orientation turns must be from zero through three"
+            is_canonical_phase(turns),
+            "phase turns must be from zero through three"
         );
         let quarter_turn = Self::quarter_turn();
-        let mut oriented = self.clone();
+        let mut phased = self.clone();
         for _ in 0..turns {
-            oriented = quarter_turn.multiply(&oriented);
+            phased = quarter_turn.multiply(&phased);
         }
-        oriented
+        phased
     }
     #[must_use]
     pub fn to_data(&self) -> Value {
@@ -346,6 +346,10 @@ impl MultiIndex {
     }
 }
 
+/// The canonical classical projection, without retained operation relationships.
+///
+/// Use `crate::retained::State` for the full native state. This projected
+/// polynomial remains the exact arithmetic camera for existing numerical tools.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NativeState(pub BTreeMap<MultiIndex, NativeScalar>);
 
@@ -403,19 +407,19 @@ impl NativeState {
                 .map(move |(ri, rc)| (li.compose(ri), lc.multiply(rc)))
         }))
     }
-    /// Apply one canonical orientation to every coefficient.
+    /// Apply one canonical phase to every coefficient.
     ///
     /// # Panics
     ///
     /// Panics when `turns` is outside the canonical range from zero through
     /// three. All executable document boundaries validate this invariant.
     #[must_use]
-    pub fn orient(&self, turns: i64) -> Self {
+    pub fn phase(&self, turns: i64) -> Self {
         assert!(
-            is_canonical_orientation(turns),
-            "orientation turns must be from zero through three"
+            is_canonical_phase(turns),
+            "phase turns must be from zero through three"
         );
-        Self::from_terms(self.0.iter().map(|(i, c)| (i.clone(), c.orient(turns))))
+        Self::from_terms(self.0.iter().map(|(i, c)| (i.clone(), c.phase(turns))))
     }
     /// Apply INDEX with explicit native multiplicity.
     ///
@@ -569,7 +573,7 @@ pub enum Expr {
         operands: Vec<Expr>,
         span: Option<Span>,
     },
-    Orient {
+    Phase {
         turns: i64,
         value: Box<Expr>,
         span: Option<Span>,
@@ -603,7 +607,7 @@ impl Expr {
             | Self::Apply { span, .. }
             | Self::Add { span, .. }
             | Self::Multiply { span, .. }
-            | Self::Orient { span, .. }
+            | Self::Phase { span, .. }
             | Self::Index { span, .. } => *span,
         }
     }
@@ -697,11 +701,11 @@ pub(crate) enum LanguageNameKind {
 pub(crate) const LANGUAGE_NAMESPACE: &[(&str, LanguageNameKind)] = &[
     ("add", LanguageNameKind::CoreOperation),
     ("multiply", LanguageNameKind::CoreOperation),
-    ("orient", LanguageNameKind::CoreOperation),
+    ("phase", LanguageNameKind::CoreOperation),
     ("index", LanguageNameKind::CoreOperation),
     ("ADD", LanguageNameKind::CoreOperation),
     ("MULTIPLY", LanguageNameKind::CoreOperation),
-    ("ORIENT", LanguageNameKind::CoreOperation),
+    ("PHASE", LanguageNameKind::CoreOperation),
     ("INDEX", LanguageNameKind::CoreOperation),
     ("trace", LanguageNameKind::ExactGrammar),
     ("length", LanguageNameKind::ExactGrammar),
@@ -1427,30 +1431,26 @@ impl Parser {
                     Ok(Expr::Multiply { operands, span })
                 }
             }
-            "orient" => {
-                self.expect(TokenKind::LParen, "NSP015", "expected '(' after 'orient'")?;
+            "phase" => {
+                self.expect(TokenKind::LParen, "NSP015", "expected '(' after 'phase'")?;
                 let turns_span = self.current().span;
-                let turns = self.integer("NST002", "orient turns must be an integer", false)?;
-                if !is_canonical_orientation(turns) {
+                let turns = self.integer("NST002", "phase turns must be an integer", false)?;
+                if !is_canonical_phase(turns) {
                     return Err(fail(
                         "NST002",
-                        "orient turns must be an integer from 0 through 3; retain repeated counts with INDEX",
+                        "phase turns must be an integer from 0 through 3; retain repeated counts with INDEX",
                         &self.source_name,
                         Some(turns_span),
                     ));
                 }
-                self.expect(
-                    TokenKind::Comma,
-                    "NSP016",
-                    "expected ',' after orient turns",
-                )?;
+                self.expect(TokenKind::Comma, "NSP016", "expected ',' after phase turns")?;
                 let value = Box::new(self.expression()?);
                 let end = self.expect(
                     TokenKind::RParen,
                     "NSP017",
-                    "expected ')' after orient expression",
+                    "expected ')' after phase expression",
                 )?;
-                Ok(Expr::Orient {
+                Ok(Expr::Phase {
                     turns,
                     value,
                     span: Some(start.span.join(end.span)),
@@ -1947,35 +1947,37 @@ pub fn output_data(state: &NativeState, kind: OutputKind) -> Result<Value, Strin
         (index.0.is_empty() && coefficient.imag.is_zero()).then(|| rational_text(&coefficient.real))
     }
 
-    fn cone_vector(state: &NativeState) -> Option<[String; 3]> {
+    fn native_vector(state: &NativeState) -> Option<Value> {
         if state.is_zero() {
-            return Some(["0".into(), "0".into(), "0".into()]);
+            return Some(
+                crate::retained::coordinates::Point::new(
+                    crate::retained::Scalar::from_classical(&NativeScalar::zero()),
+                    BigUint::zero(),
+                )
+                .vector(),
+            );
         }
         let mut terms = state.0.iter();
         let (index, coefficient) = terms.next()?;
         if terms.next().is_some() || !index.0.is_empty() {
             return None;
         }
-        let x_squared = &coefficient.real * &coefficient.real;
-        let y_squared = &coefficient.imag * &coefficient.imag;
-        let difference = &x_squared - &y_squared;
-        let mix =
-            BigRational::from_integer(BigInt::from(2)) * &coefficient.real * &coefficient.imag;
-        let size = x_squared + y_squared;
-        Some([
-            rational_text(&difference),
-            rational_text(&mix),
-            rational_text(&size),
-        ])
+        Some(
+            crate::retained::coordinates::Point::new(
+                crate::retained::Scalar::from_classical(coefficient),
+                BigUint::zero(),
+            )
+            .vector(),
+        )
     }
 
     match kind {
         OutputKind::Number => number(state)
             .map(|value| json!({"kind":"number","value":value}))
             .ok_or("result is not a real number".into()),
-        OutputKind::Vector => cone_vector(state)
+        OutputKind::Vector => native_vector(state)
             .map(|value| json!({"kind":"vector","value":value}))
-            .ok_or("result is not one unindexed oriented scalar".into()),
+            .ok_or("result is not one unindexed phased scalar".into()),
         OutputKind::String => {
             decode_utf8(state).map(|value| json!({"kind":"string","value":value}))
         }
@@ -2041,7 +2043,7 @@ fn parse_result(
             Expr::Add {
                 operands: vec![
                     left,
-                    Expr::Orient {
+                    Expr::Phase {
                         turns: 2,
                         value: Box::new(right),
                         span,
@@ -2318,12 +2320,12 @@ fn analyze_expr(
                 .iter()
                 .for_each(|item| analyze_expr(item, names, functions, source, out, true));
         }
-        Expr::Orient { turns, value, span } => {
-            if !is_canonical_orientation(*turns) {
+        Expr::Phase { turns, value, span } => {
+            if !is_canonical_phase(*turns) {
                 out.push(
                     fail(
                         "NST002",
-                        "orient turns must be an integer from 0 through 3; retain repeated counts with INDEX",
+                        "phase turns must be an integer from 0 through 3; retain repeated counts with INDEX",
                         source,
                         *span,
                     )
@@ -2381,7 +2383,7 @@ fn expression_calls<'a>(expr: &'a Expr, calls: &mut Vec<(&'a str, Option<Span>)>
                 .iter()
                 .for_each(|value| expression_calls(value, calls));
         }
-        Expr::Orient { value, .. }
+        Expr::Phase { value, .. }
         | Expr::Index { value, .. }
         | Expr::Camera { value, .. }
         | Expr::Length { value, .. }
@@ -2601,19 +2603,34 @@ pub(crate) fn validate(program: &Program) -> Result<(), LanguageError> {
         .map_or(Ok(()), |diagnostic| Err(LanguageError(diagnostic)))
 }
 
-/// Evaluate a valid exact-state document directly.
+/// Evaluate a document's classical projection directly.
+///
+/// This numerical evaluator remains independent of retained execution. Use
+/// `crate::retained::interpret` to keep cancelled inputs in the returned state.
 ///
 /// # Errors
 ///
 /// Returns the first semantic or exact-value diagnostic.
 pub fn interpret(program: &Program) -> Result<NativeState, LanguageError> {
+    interpret_value(program)
+}
+
+pub(crate) fn interpret_retained(
+    program: &Program,
+) -> Result<crate::retained::State, LanguageError> {
+    interpret_value(program)
+}
+
+fn interpret_value<S: crate::retained::evaluation::Evaluated>(
+    program: &Program,
+) -> Result<S, LanguageError> {
     validate(program)?;
     let functions = program
         .functions
         .iter()
         .map(|function| (function.name.clone(), function))
         .collect::<BTreeMap<_, _>>();
-    let mut env = BTreeMap::new();
+    let mut env: BTreeMap<String, ExactBinding<S>> = BTreeMap::new();
     for binding in &program.bindings {
         env.insert(
             binding.name.clone(),
@@ -2626,13 +2643,21 @@ pub fn interpret(program: &Program) -> Result<NativeState, LanguageError> {
             )?),
         );
     }
-    evaluate(
+    let result = evaluate(
         &program.result,
         &env,
         &functions,
         &mut Vec::new(),
         &program.source_name,
-    )
+    )?;
+    let inputs = env
+        .values()
+        .filter_map(|binding| match binding {
+            ExactBinding::Value(value) => Some(value.clone()),
+            ExactBinding::Pack(_) => None,
+        })
+        .collect::<Vec<_>>();
+    Ok(result.retaining(&inputs))
 }
 
 /// A validated source-defined function callable with exact native states.
@@ -2676,6 +2701,24 @@ impl ExactFunction<'_> {
     /// Returns `NSE002` for the wrong argument count or the first ordinary
     /// language diagnostic raised while evaluating the function body.
     pub fn apply(&self, arguments: &[NativeState]) -> Result<NativeState, LanguageError> {
+        self.apply_value(arguments)
+    }
+
+    /// Apply a function without replacing full states with classical camera values.
+    ///
+    /// # Errors
+    /// Returns an arity diagnostic or the first source evaluation diagnostic.
+    pub fn apply_retained(
+        &self,
+        arguments: &[crate::retained::State],
+    ) -> Result<crate::retained::State, LanguageError> {
+        self.apply_value(arguments)
+    }
+
+    fn apply_value<S: crate::retained::evaluation::Evaluated>(
+        &self,
+        arguments: &[S],
+    ) -> Result<S, LanguageError> {
         if !accepts_arity(self.definition, arguments.len()) {
             return Err(fail(
                 "NSE002",
@@ -2697,6 +2740,7 @@ impl ExactFunction<'_> {
             &mut vec![self.definition.name.clone()],
             self.source_name,
         )
+        .map(|result: S| result.retaining(arguments))
     }
 }
 
@@ -2738,21 +2782,32 @@ pub(crate) struct UnaryFunction<'a> {
 }
 
 impl UnaryFunction<'_> {
-    pub(crate) fn apply(
+    pub(crate) fn apply_retained(
         &self,
-        mut value: NativeState,
+        value: crate::retained::State,
         steps: u64,
-    ) -> Result<NativeState, LanguageError> {
+    ) -> Result<crate::retained::State, LanguageError> {
+        self.apply_value(value, steps)
+    }
+
+    fn apply_value<S: crate::retained::evaluation::Evaluated>(
+        &self,
+        mut value: S,
+        steps: u64,
+    ) -> Result<S, LanguageError> {
         let parameter = &self.definition.parameters[0];
         for _ in 0..steps {
-            let environment = BTreeMap::from([(parameter.clone(), ExactBinding::Value(value))]);
+            let previous = value;
+            let environment =
+                BTreeMap::from([(parameter.clone(), ExactBinding::Value(previous.clone()))]);
             value = evaluate(
                 &self.definition.body,
                 &environment,
                 &self.functions,
                 &mut vec![self.definition.name.clone()],
                 self.source_name,
-            )?;
+            )?
+            .retaining(&[previous]);
         }
         Ok(value)
     }
@@ -2817,12 +2872,12 @@ pub(crate) fn expanded_unary_expression(
 }
 
 #[derive(Clone, Debug)]
-enum ExactBinding {
-    Value(NativeState),
-    Pack(Vec<NativeState>),
+enum ExactBinding<S = NativeState> {
+    Value(S),
+    Pack(Vec<S>),
 }
 
-fn bind_arguments(function: &Function, values: Vec<NativeState>) -> BTreeMap<String, ExactBinding> {
+fn bind_arguments<S>(function: &Function, values: Vec<S>) -> BTreeMap<String, ExactBinding<S>> {
     let fixed = fixed_parameter_count(function);
     let mut values = values.into_iter();
     let mut environment = function
@@ -2842,13 +2897,13 @@ fn bind_arguments(function: &Function, values: Vec<NativeState>) -> BTreeMap<Str
     environment
 }
 
-fn evaluate_list(
+fn evaluate_list<S: crate::retained::evaluation::Evaluated>(
     expressions: &[Expr],
-    env: &BTreeMap<String, ExactBinding>,
+    env: &BTreeMap<String, ExactBinding<S>>,
     functions: &BTreeMap<String, &Function>,
     active: &mut Vec<String>,
     source: &str,
-) -> Result<Vec<NativeState>, LanguageError> {
+) -> Result<Vec<S>, LanguageError> {
     let mut values = Vec::new();
     for expression in expressions {
         if let Expr::Spread { name, span } = expression {
@@ -2874,25 +2929,25 @@ fn evaluate_list(
     clippy::too_many_lines,
     reason = "one exhaustive expression match keeps direct denotation auditable"
 )]
-fn evaluate(
+fn evaluate<S: crate::retained::evaluation::Evaluated>(
     expr: &Expr,
-    env: &BTreeMap<String, ExactBinding>,
+    env: &BTreeMap<String, ExactBinding<S>>,
     functions: &BTreeMap<String, &Function>,
     active: &mut Vec<String>,
     source: &str,
-) -> Result<NativeState, LanguageError> {
-    match expr {
+) -> Result<S, LanguageError> {
+    let result = match expr {
         Expr::Reflect {
             operation,
             arguments,
             span,
         } => {
             let values = evaluate_list(arguments, env, functions, active, source)?;
-            crate::reflection::evaluate(*operation, &values, source, *span)
+            evaluate_reflection(*operation, &values, source, *span)
         }
-        Expr::Zero { .. } => Ok(NativeState::zero()),
-        Expr::One { .. } => Ok(NativeState::one()),
-        Expr::Scalar { real, imag, span } => Ok(NativeState::scalar(
+        Expr::Zero { .. } => Ok(S::zero()),
+        Expr::One { .. } => Ok(S::one()),
+        Expr::Scalar { real, imag, span } => Ok(S::scalar(
             NativeScalar::from_text(real, imag)
                 .map_err(|message| fail("NST005", message, source, *span))?,
         )),
@@ -2953,11 +3008,11 @@ fn evaluate(
                     *span,
                 ));
             }
-            let local = bind_arguments(definition, values);
+            let local = bind_arguments(definition, values.clone());
             active.push(function.clone());
             let result = evaluate(&definition.body, &local, functions, active, source);
             active.pop();
-            result
+            result.map(|result: S| result.retaining(&values))
         }
         Expr::Trace { function, span } => {
             let strand =
@@ -2966,22 +3021,33 @@ fn evaluate(
         }
         Expr::Length { value, span } => {
             let strand = evaluate(value, env, functions, active, source)?;
-            let length = crate::strand::operation_length(&strand, source, *span)?;
-            Ok(NativeState::one()
+            let length = crate::strand::operation_length(strand.project(), source, *span)?;
+            Ok(S::one()
                 .index_power(1, length)
-                .expect("the length camera uses a positive direction"))
+                .expect("the length camera uses a positive direction")
+                .retaining(&[strand]))
         }
         Expr::Untrace { value, rank, span } => {
             let state = evaluate(value, env, functions, active, source)?;
-            if crate::strand::is_operation_strand(&state) {
-                return crate::strand::optimize_operation_strand(&state, rank, source, *span)?
-                    .map_or(Ok(state), |candidate| {
+            if crate::strand::is_operation_strand(state.project()) {
+                return crate::strand::optimize_operation_strand(
+                    state.project(),
+                    rank,
+                    source,
+                    *span,
+                )?
+                .map_or_else(
+                    || Ok(state.clone()),
+                    |candidate| {
                         evaluate(&candidate, env, functions, active, source)
-                    });
+                            .map(|result: S| result.retaining(std::slice::from_ref(&state)))
+                    },
+                );
             }
-            let pattern = crate::discovery::discover(&state, rank, source, *span)?;
+            let pattern = crate::discovery::discover(state.project(), rank, source, *span)?;
             let expression = pattern.expression(source, *span)?;
             evaluate(&expression, env, functions, active, source)
+                .map(|result: S| result.retaining(&[state]))
         }
         Expr::RankDescent {
             value,
@@ -2991,7 +3057,7 @@ fn evaluate(
         } => {
             let state = evaluate(value, env, functions, active, source)?;
             let search = rank_descent_search(
-                &state,
+                state.project(),
                 target_rank.as_deref(),
                 minimum_agreement.as_deref(),
                 source,
@@ -2999,6 +3065,7 @@ fn evaluate(
             )?;
             let expression = search.final_pattern().expression(source, *span)?;
             evaluate(&expression, env, functions, active, source)
+                .map(|result: S| result.retaining(&[state]))
         }
         Expr::Apply {
             pattern,
@@ -3021,20 +3088,20 @@ fn evaluate(
             };
             let state = evaluate(value, env, functions, active, source)?;
             let search = rank_descent_search(
-                &state,
+                state.project(),
                 target_rank.as_deref(),
                 minimum_agreement.as_deref(),
                 source,
                 *span,
             )?;
-            crate::rank_descent::replay_at(search.final_pattern(), *position, source).map_err(
-                |mut error| {
+            crate::rank_descent::replay_at(search.final_pattern(), *position, source)
+                .map_err(|mut error| {
                     if error.0.span.is_none() {
                         error.0.span = *span;
                     }
                     error
-                },
-            )
+                })
+                .map(|result| S::lift(&result).retaining(&[state]))
         }
         Expr::Concat {
             direction,
@@ -3050,7 +3117,7 @@ fn evaluate(
                     *span,
                 ));
             }
-            let mut out = NativeState::zero();
+            let mut out = S::zero();
             for (position, value) in values.into_iter().enumerate() {
                 let depth = u64::try_from(position + 1).map_err(|_capacity_error| {
                     fail(
@@ -3092,11 +3159,12 @@ fn evaluate(
             }
             let mut accumulator = evaluate(initial, env, functions, active, source)?;
             for value in evaluate_list(values, env, functions, active, source)? {
-                let local = bind_arguments(definition, vec![accumulator, value]);
+                let arguments = vec![accumulator, value];
+                let local = bind_arguments(definition, arguments.clone());
                 active.push(function.clone());
                 let result = evaluate(&definition.body, &local, functions, active, source);
                 active.pop();
-                accumulator = result?;
+                accumulator = result?.retaining(&arguments);
             }
             Ok(accumulator)
         }
@@ -3110,21 +3178,21 @@ fn evaluate(
                 .camera(*from_direction, *to_direction))
         }
         Expr::Add { operands, .. } => {
-            let mut out = NativeState::zero();
+            let mut out = S::zero();
             for value in evaluate_list(operands, env, functions, active, source)? {
                 out = out.add(&value);
             }
             Ok(out)
         }
         Expr::Multiply { operands, .. } => {
-            let mut out = NativeState::one();
+            let mut out = S::one();
             for value in evaluate_list(operands, env, functions, active, source)? {
                 out = out.multiply(&value);
             }
             Ok(out)
         }
-        Expr::Orient { turns, value, .. } => {
-            Ok(evaluate(value, env, functions, active, source)?.orient(*turns))
+        Expr::Phase { turns, value, .. } => {
+            Ok(evaluate(value, env, functions, active, source)?.phase(*turns))
         }
         Expr::Index {
             direction,
@@ -3134,7 +3202,58 @@ fn evaluate(
         } => evaluate(value, env, functions, active, source)?
             .index_power(*direction, *multiplicity)
             .map_err(|message| fail("NST003", message, source, *span)),
+    };
+    result.map(|value| value.at_span(expr.span()))
+}
+
+fn evaluate_reflection<S: crate::retained::evaluation::Evaluated>(
+    operation: crate::reflection::Operation,
+    arguments: &[S],
+    source: &str,
+    span: Option<Span>,
+) -> Result<S, LanguageError> {
+    if !operation.accepts(arguments.len()) {
+        return Err(fail(
+            "NSR001",
+            "invalid reflection argument count",
+            source,
+            span,
+        ));
     }
+    let result = match operation {
+        crate::reflection::Operation::Rewrite => {
+            let projections = arguments
+                .iter()
+                .map(|state| state.project().clone())
+                .collect::<Vec<_>>();
+            let expr = crate::reflection::rewrite(&projections, source, span)?;
+            evaluate(
+                &expr,
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                &mut Vec::new(),
+                source,
+            )
+        }
+        crate::reflection::Operation::Apply => {
+            let (functions, root) =
+                crate::reflection::application_graph(arguments[0].project(), source, span)?;
+            let program = Program {
+                functions,
+                bindings: Vec::new(),
+                result: Expr::Trace {
+                    function: root.clone(),
+                    span,
+                },
+                source_name: source.into(),
+                span,
+                goal: Goal::Emit,
+                output_kind: OutputKind::Pattern,
+            };
+            exact_function(&program, &root)?.apply_value(&arguments[1..])
+        }
+    }?;
+    Ok(result.retaining(arguments))
 }
 
 fn rank_descent_search(
@@ -3301,8 +3420,8 @@ pub(crate) fn expression_source(expression: &Expr) -> String {
         Expr::Multiply { operands, .. } => {
             format!("multiply({})", expression_list_source(operands))
         }
-        Expr::Orient { turns, value, .. } => {
-            format!("orient({turns}, {})", expression_source(value))
+        Expr::Phase { turns, value, .. } => {
+            format!("phase({turns}, {})", expression_source(value))
         }
         Expr::Index {
             direction,
@@ -3636,7 +3755,7 @@ fn expand_expr(
             expand_list(operands, functions, parameters, active, source)?,
             *span,
         )),
-        Expr::Orient { turns, value, span } => Ok(Expr::Orient {
+        Expr::Phase { turns, value, span } => Ok(Expr::Phase {
             turns: *turns,
             value: Box::new(expand_expr(value, functions, parameters, active, source)?),
             span: *span,
@@ -3798,7 +3917,7 @@ fn lower_reflective_expr(
                 .collect::<Result<Vec<_>, _>>()?,
             span: *span,
         }),
-        Expr::Orient { turns, value, span } => Ok(Expr::Orient {
+        Expr::Phase { turns, value, span } => Ok(Expr::Phase {
             turns: *turns,
             value: Box::new(lower_reflective_expr(value, env, source)?),
             span: *span,
@@ -4098,36 +4217,36 @@ fn optimize_expr(expr: &Expr, events: &mut Vec<RewriteEvent>) -> Expr {
                 },
             }
         }
-        Expr::Orient { turns, value, span } => {
+        Expr::Phase { turns, value, span } => {
             let value = optimize_expr(value, events);
             if *turns == 0 {
-                event(events, "OPT-ORIENT-IDENTITY-1", &["L-SEP-5"], *span);
+                event(events, "OPT-PHASE-IDENTITY-1", &["L-SEP-5"], *span);
                 return value;
             }
-            if let Expr::Orient {
+            if let Expr::Phase {
                 turns: inner,
                 value: inner_value,
                 ..
             } = value
             {
-                event(events, "OPT-ORIENT-COMBINE-1", &["L-SEP-5"], *span);
+                event(events, "OPT-PHASE-COMBINE-1", &["L-SEP-5"], *span);
                 let total = *turns + inner;
-                let combined = total.rem_euclid(MAX_CANONICAL_ORIENTATION + 1);
+                let combined = total.rem_euclid(MAX_CANONICAL_PHASE + 1);
                 if combined != total {
-                    event(events, "OPT-ORIENT-NORMALIZE-1", &["L-SEP-5"], *span);
+                    event(events, "OPT-PHASE-NORMALIZE-1", &["L-SEP-5"], *span);
                 }
                 if combined == 0 {
-                    event(events, "OPT-ORIENT-IDENTITY-1", &["L-SEP-5"], *span);
+                    event(events, "OPT-PHASE-IDENTITY-1", &["L-SEP-5"], *span);
                     *inner_value
                 } else {
-                    Expr::Orient {
+                    Expr::Phase {
                         turns: combined,
                         value: inner_value,
                         span: *span,
                     }
                 }
             } else {
-                Expr::Orient {
+                Expr::Phase {
                     turns: *turns,
                     value: Box::new(value),
                     span: *span,
@@ -4236,9 +4355,9 @@ mod tests {
     use super::*;
 
     #[test]
-    #[should_panic(expected = "orientation turns must be from zero through three")]
-    fn scalar_orientation_does_not_silently_normalize_invalid_api_input() {
-        let _ = NativeScalar::one().orient(4);
+    #[should_panic(expected = "phase turns must be from zero through three")]
+    fn scalar_phase_does_not_silently_normalize_invalid_api_input() {
+        let _ = NativeScalar::one().phase(4);
     }
 
     #[test]
@@ -4252,7 +4371,7 @@ mod tests {
     #[test]
     fn exact_core_and_parser() {
         let program = parse(
-            "let x = index(1, scalar(2, 0))\noutput add(x, orient(2, x))",
+            "let x = index(1, scalar(2, 0))\noutput add(x, phase(2, x))",
             "core.ns",
         )
         .unwrap();
@@ -4326,7 +4445,7 @@ mod tests {
     #[test]
     fn zero_proof_goal_round_trips() {
         let program = parse(
-            "let x = index(1, scalar(2, 1))\nadd(x, orient(2, x)) = 0",
+            "let x = index(1, scalar(2, 1))\nadd(x, phase(2, x)) = 0",
             "proof.ns",
         )
         .unwrap();
@@ -4342,7 +4461,7 @@ mod tests {
     fn axis_cancellation_is_automatic_and_preserves_index_residuals() {
         let reduced = interpret(
             &parse(
-                "output add(scalar(3, 2), orient(2, scalar(3, 1)))",
+                "output add(scalar(3, 2), phase(2, scalar(3, 1)))",
                 "residual.ns",
             )
             .unwrap(),
@@ -4355,7 +4474,7 @@ mod tests {
 
         let indexed = interpret(
             &parse(
-                "output add(index(1, 1), orient(2, index(2, 1)))",
+                "output add(index(1, 1), phase(2, index(2, 1)))",
                 "indexed-residual.ns",
             )
             .unwrap(),
@@ -4368,7 +4487,7 @@ mod tests {
     #[test]
     fn utf8_surface_is_exact_ordered_and_core_only() {
         let program = parse(
-            "let text = \"hé\\nλ\"\nadd(text, orient(2, \"h\\u00e9\\nλ\")) = 0",
+            "let text = \"hé\\nλ\"\nadd(text, phase(2, \"h\\u00e9\\nλ\")) = 0",
             "utf8.ns",
         )
         .unwrap();
@@ -4426,15 +4545,16 @@ mod tests {
         let vector = NativeState::scalar(NativeScalar::from_text("3", "4").unwrap());
         assert_eq!(
             output_data(&vector, OutputKind::Vector).unwrap()["value"],
-            json!(["-7", "24", "25"])
+            json!([{"kind":"logarithmic", "base":"e", "factor":"1/2", "argument":"25"},
+                {"kind":"finite", "value":"3/5"}, {"kind":"finite", "value":"4/5"}])
         );
         assert_eq!(
             output_data(&NativeState::zero(), OutputKind::Vector).unwrap()["value"],
-            json!(["0", "0", "0"])
+            json!([{"kind":"zero_boundary"}, null, null])
         );
         assert_eq!(
             output_data(&pattern, OutputKind::Vector).unwrap_err(),
-            "result is not one unindexed oriented scalar"
+            "result is not one unindexed phased scalar"
         );
 
         assert_eq!(
@@ -4467,7 +4587,7 @@ mod tests {
         let source = "let parameters = (head, tail...) => concat(9, head, tail...)\n\
                       let forwarded = (values...) => parameters(values...)\n\
                       let expected = () => add(index(9, 2), index(9, index(9, 3)), index(9, index(9, index(9, 5))))\n\
-                      add(forwarded(2, 3, 5), orient(2, expected())) = 0";
+                      add(forwarded(2, 3, 5), phase(2, expected())) = 0";
         let program = parse(source, "variadic.ns").unwrap();
 
         assert!(program.functions[0].variadic);
@@ -4485,8 +4605,9 @@ mod tests {
                     | crate::bytecode::Opcode::Store
                     | crate::bytecode::Opcode::Add
                     | crate::bytecode::Opcode::Multiply
-                    | crate::bytecode::Opcode::Orient
+                    | crate::bytecode::Opcode::Phase
                     | crate::bytecode::Opcode::Index
+                    | crate::bytecode::Opcode::Retain
                     | crate::bytecode::Opcode::Halt
             )
         }));

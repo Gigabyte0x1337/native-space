@@ -2,8 +2,8 @@
 # Generic Native Space 1.0 functions. No mathematical camera or theorem has
 # privileged runtime behavior.
 
-let identity_orientation = () =>
-ORIENT(0)
+let identity_phase = () =>
+PHASE(0)
 
 let derive_all = (functions...) =>
 functions()
@@ -16,7 +16,7 @@ ADD()
 let axis_subtract = (left, right) =>
 left()
 right()
-ORIENT(2)
+PHASE(2)
 ADD()
 
 let zero_fill_axes = (parts...) =>
@@ -25,4 +25,4 @@ ADD()
 
 let native_perspective = (objects...) =>
 objects()
-ORIENT("inverse observer turn")
+PHASE("inverse observer turn")

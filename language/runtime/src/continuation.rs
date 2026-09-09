@@ -1349,7 +1349,7 @@ fn expression_nodes(expression: &Expr) -> usize {
         }
         Expr::Concat { values, .. } => 1 + values.iter().map(expression_nodes).sum::<usize>(),
         Expr::Call { arguments, .. } => 1 + arguments.iter().map(expression_nodes).sum::<usize>(),
-        Expr::Orient { value, .. }
+        Expr::Phase { value, .. }
         | Expr::Index { value, .. }
         | Expr::Length { value, .. }
         | Expr::Untrace { value, .. } => 1 + expression_nodes(value),
@@ -1363,7 +1363,7 @@ fn operation_steps(expression: &Expr) -> usize {
             1 + operands.iter().map(operation_steps).sum::<usize>()
         }
         Expr::Concat { values, .. } => values.iter().map(operation_steps).sum(),
-        Expr::Orient { value, .. } | Expr::Index { value, .. } => 1 + operation_steps(value),
+        Expr::Phase { value, .. } | Expr::Index { value, .. } => 1 + operation_steps(value),
         Expr::Call { arguments, .. } => arguments.iter().map(operation_steps).sum(),
         Expr::Length { value, .. } | Expr::Untrace { value, .. } => operation_steps(value),
         _ => 0,
@@ -1495,7 +1495,7 @@ mod tests {
                 MultiIndex::from_depths([(birth, 1)]).unwrap(),
                 NativeScalar::from_text(&prime.to_string(), "0")
                     .unwrap()
-                    .orient(i64::try_from(birth % 4).expect("canonical prime phase fits i64")),
+                    .phase(i64::try_from(birth % 4).expect("canonical prime phase fits i64")),
             )
         }));
         let error = synthesize(&state, "prime30.ns", None).unwrap_err();

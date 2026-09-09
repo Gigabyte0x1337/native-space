@@ -316,11 +316,11 @@ mod tests {
     fn source_names_have_no_rust_privileges() {
         let source = r"
 let custom = () =>
-ORIENT(2);
+PHASE(2);
 ADD();
 ";
         let report = derive_from_source(source, "custom.ns", "custom", &[]).unwrap();
-        assert_eq!(report.used_operations, ["ADD", "ORIENT"]);
+        assert_eq!(report.used_operations, ["ADD", "PHASE"]);
         assert_eq!(report.primitive_steps.len(), 2);
     }
 
@@ -328,7 +328,7 @@ ADD();
     fn self_reference_closes_a_finite_pattern() {
         let source = r"
 let first = () =>
-ORIENT(1)
+PHASE(1)
 second();
 let second = () =>
 INDEX()
@@ -363,11 +363,11 @@ still()
         let source = r"
 let reflected = () =>
 reflected()
-ORIENT(2)
+PHASE(2)
 ";
         let report = derive_from_source(source, "reflected.ns", "reflected", &[]).unwrap();
         assert_eq!(report.primitive_steps.len(), 1);
-        assert_eq!(report.primitive_steps[0].name, "ORIENT");
+        assert_eq!(report.primitive_steps[0].name, "PHASE");
         assert_eq!(report.pattern_references.len(), 1);
     }
 

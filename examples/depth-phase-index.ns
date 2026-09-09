@@ -1,0 +1,13 @@
+# Depth is ln|z|. A quarter phase step is multiplication by i.
+# The sample 3+4i has X=ln(25)/2 and unit direction (3/5,4/5).
+# View --index-direction 7 uses its INDEX(7) depth as k.
+let value = add(3, phase(1, 4))
+let sample = index(7, value, 30)
+
+# Squaring the value doubles depth and phase. Indexing afterward keeps k=30.
+# Squaring the entire indexed sample would also compose its indices: k=60.
+let squared_value = index(7, multiply(value, value), 30)
+
+# Selection is retained in the graph; no eager exact-value replacement.
+let read = (x) => camera(7, 0, x)
+output read(squared_value) as vector

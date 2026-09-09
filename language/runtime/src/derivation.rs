@@ -20,7 +20,7 @@ use crate::core::{Diagnostic, LanguageError, Span, Token, TokenKind, language_na
 pub enum Operation {
     Add,
     Multiply,
-    Orient,
+    Phase,
     Index,
 }
 
@@ -30,7 +30,7 @@ impl Operation {
         match self {
             Self::Add => "ADD",
             Self::Multiply => "MULTIPLY",
-            Self::Orient => "ORIENT",
+            Self::Phase => "PHASE",
             Self::Index => "INDEX",
         }
     }
@@ -320,12 +320,12 @@ impl Parser {
         let operation = match start.text.as_str() {
             "ADD" => Some(Operation::Add),
             "MULTIPLY" => Some(Operation::Multiply),
-            "ORIENT" => Some(Operation::Orient),
+            "PHASE" => Some(Operation::Phase),
             "INDEX" => Some(Operation::Index),
             _ => None,
         };
         if let Some(operation) = operation {
-            let expected = usize::from(operation == Operation::Orient);
+            let expected = usize::from(operation == Operation::Phase);
             if values.len() != expected {
                 return Err(self.error(
                     "NSF-P024",
@@ -685,7 +685,7 @@ value()
 let four = () =>
 ADD()
 MULTIPLY()
-ORIENT(2)
+PHASE(2)
 INDEX()
 ",
             "four.ns",

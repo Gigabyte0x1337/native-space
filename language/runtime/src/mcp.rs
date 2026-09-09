@@ -155,17 +155,14 @@ mod tests {
         let result = OperationTools::new()
             .derive_operations(Parameters(DeriveOperationsParameters {
                 function: "axis_subtract".to_owned(),
-                arguments: vec![
-                    "identity_orientation".to_owned(),
-                    "identity_orientation".to_owned(),
-                ],
+                arguments: vec!["identity_phase".to_owned(), "identity_phase".to_owned()],
                 source: None,
             }))
             .expect("built-in derivation must succeed");
 
         assert!(result.starts_with("Derived: axis_subtract"));
         assert!(result.contains("Primitive operations:"));
-        assert!(result.contains("ORIENT(0)"));
+        assert!(result.contains("PHASE(0)"));
         assert!(result.contains("ADD()"));
     }
 

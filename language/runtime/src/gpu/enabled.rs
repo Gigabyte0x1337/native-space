@@ -23,18 +23,23 @@ const MAX_GPU_STEPS: u64 = 1_000_000;
 const WORKGROUP_SIZE: u32 = 64;
 
 /// Exact results and the physical adapter that executed them.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct GpuBatchResult {
     pub results: Vec<NativeState>,
+    pub states: Vec<crate::retained::State>,
     pub adapter_name: String,
 }
 
 /// Execute independent exact integer-scalar points on a GPU.
 ///
 /// The selected function may use exact integer constants, ADD, MULTIPLY, and
-/// even ORIENT turns. Every intermediate value must stay in signed 32-bit
-/// range. INDEX, odd ORIENT turns, rational or complex values, reflective
+/// even PHASE turns. Every intermediate value must stay in signed 32-bit
+/// range. INDEX, odd PHASE turns, rational or complex values, reflective
 /// forms, and non-scalar states are rejected rather than approximated.
+/// The host constructs the retained native graphs; the GPU computes their
+/// classical observations. Native arithmetic construction is lazy; explicit
+/// source-camera reads, if erased from the expanded kernel, still run on the
+/// host and retain their dependencies. This is not a fallback numerical solver.
 ///
 /// # Errors
 ///
@@ -66,7 +71,7 @@ pub async fn execute(
         .iter()
         .enumerate()
         .map(|(position, input)| {
-            scalar_i32(input.state()).map_err(|message| {
+            scalar_i32(input.projection()).map_err(|message| {
                 gpu_error(
                     "NSG002",
                     format!("unsupported GPU data item {}: {message}", position + 1),
@@ -78,6 +83,7 @@ pub async fn execute(
     if integers.is_empty() {
         return Ok(GpuBatchResult {
             results: Vec::new(),
+            states: Vec::new(),
             adapter_name: "no dispatch: empty data".into(),
         });
     }
@@ -119,6 +125,7 @@ pub async fn execute(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(GpuBatchResult {
         results,
+        states: crate::batch::execute_cpu(program, function_name, inputs, u64::from(steps))?,
         adapter_name,
     })
 }
@@ -378,10 +385,10 @@ impl ShaderBuilder {
             Expr::Reference { name, .. } if name == "input" => Ok("input".into()),
             Expr::Add { operands, .. } => self.fold(operands, "checked_add"),
             Expr::Multiply { operands, .. } => self.fold(operands, "checked_multiply"),
-            Expr::Orient {
+            Expr::Phase {
                 turns: 0, value, ..
             } => self.expression(value),
-            Expr::Orient {
+            Expr::Phase {
                 turns: 2, value, ..
             } => {
                 let value = self.expression(value)?;
@@ -393,7 +400,7 @@ impl ShaderBuilder {
                 *span,
             )),
             unsupported => Err(gpu_semantic_error(
-                "GPU batch supports integer scalars, ADD, MULTIPLY, and even ORIENT turns only",
+                "GPU batch supports integer scalars, ADD, MULTIPLY, and even PHASE turns only",
                 &self.source_name,
                 unsupported.span(),
             )),
@@ -552,6 +559,31 @@ fn gpu_error(code: &str, message: impl Into<String>, source_name: &str) -> Langu
 mod tests {
     use super::*;
     use crate::core::parse;
+
+    #[tokio::test]
+    #[ignore = "requires a physical GPU; run explicitly to verify device observations and full-state feedback"]
+    async fn hardware_observations_match_cpu_while_cancelled_states_remain_distinct() {
+        let program = parse(
+            "let step = (x) => add(multiply(x, 0), 1)\noutput 0",
+            "gpu-feedback.ns",
+        )
+        .unwrap();
+        let inputs = ["7", "100"].map(|value| {
+            DataPoint::new(
+                crate::retained::State::scalar(NativeScalar::from_text(value, "0").unwrap())
+                    .multiply(&crate::retained::State::zero()),
+            )
+        });
+        let gpu = execute(&program, "step", &inputs, 3).await.unwrap();
+        let cpu = crate::batch::execute_cpu(&program, "step", &inputs, 3).unwrap();
+        assert!(!gpu.states[0].same_structure(&gpu.states[1]));
+        for ((native, observed), cpu) in gpu.states.iter().zip(&gpu.results).zip(&cpu) {
+            assert!(native.same_structure(cpu));
+            assert_eq!(native.project(), observed);
+            assert_eq!(observed, &NativeState::one());
+        }
+        println!("Verified retained feedback on {}", gpu.adapter_name);
+    }
 
     #[test]
     fn shader_compiler_preserves_sequential_step_expression() {

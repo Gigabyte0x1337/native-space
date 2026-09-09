@@ -35,8 +35,23 @@ Feature selection changes backend availability, not Native Space semantics.
 The enabled backend still accepts only its documented exact signed-32-bit
 subset, detects overflow, and rejects unsupported coordinates and operations.
 
+The GPU calculates classical observations. The host constructs the native
+operation graphs for those same steps and retains inputs and scopes for
+feedback. Primitive graph construction is lazy; explicit staged camera reads
+remain host work. This is not a GPU-resident native graph or a claim of faster
+execution. `GpuBatchResult.results` contains device observations and `states`
+contains the retained states; batch JSON exposes both separately.
+
 ## Verification
 
 The default test suite checks the unavailable-backend diagnostic without
 compiling GPU dependencies. The all-features suite compiles and tests the real
-shader backend. Strict linting runs with all features enabled.
+shader backend. Hardware execution is a separate opt-in test and fails rather
+than silently skipping if no adapter is available:
+
+```sh
+cargo test --manifest-path language/runtime/Cargo.toml --features gpu --lib hardware_observations_match_cpu -- --ignored --nocapture
+```
+
+It checks device values against CPU observations and compares complete native
+graphs for distinct cancelled inputs after three feedback steps.

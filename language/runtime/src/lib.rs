@@ -20,6 +20,7 @@ pub mod logic;
 pub mod rank_descent;
 pub mod rank_policy;
 pub mod reflection;
+pub mod retained;
 pub mod strand;
 
 pub const LANGUAGE_VERSION: &str = "1.0";
@@ -194,7 +195,7 @@ mod unified_tests {
             Ok(Document::State(_))
         ));
         assert!(matches!(
-            parse_document("let alignment = () =>\nORIENT(2)\nADD()", "functions.ns"),
+            parse_document("let alignment = () =>\nPHASE(2)\nADD()", "functions.ns"),
             Ok(Document::Functions(_))
         ));
         assert!(matches!(

@@ -446,7 +446,7 @@ mod tests {
             let turns = i64::try_from(offset % 4).expect("canonical test phase fits i64");
             (
                 MultiIndex::from_depths([(direction, 1)]).unwrap(),
-                NativeScalar::one().orient(turns),
+                NativeScalar::one().phase(turns),
             )
         }))
     }

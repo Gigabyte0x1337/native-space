@@ -6,9 +6,8 @@
 //! Steps are sequential within a data point. CPU workers and GPU invocations
 //! distribute only independent points, preserving input order.
 
-use std::{collections::BTreeMap, fs, path::Path, str::FromStr as _, thread};
+use std::{fs, path::Path, thread};
 
-use num_bigint::BigUint;
 use num_traits::{ToPrimitive as _, Zero as _};
 use serde_json::{Value, json};
 
@@ -16,29 +15,33 @@ use crate::core::{
     Diagnostic, LanguageError, MultiIndex, NativeScalar, NativeState, OutputKind, Program,
     exact_function, unary_function,
 };
+use crate::retained::State;
 
 const BINARY_MAGIC: &[u8; 8] = b"NSBATCH\0";
-const BINARY_VERSION: u16 = 1;
+const BINARY_VERSION: u16 = 2;
 const NO_SHAPE: u16 = u16::MAX;
 const MAX_ARRAY_RANK: usize = 64;
+// A shape may describe a sparse state with enormous empty regions. Rendering
+// is optional: bound dense output, never allocate from untrusted shape metadata.
+const MAX_READABLE_ARRAY_ELEMENTS: usize = 1_000_000;
 
 /// One ordered batch item and its requested host-array shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct DataPoint {
-    state: NativeState,
+    state: State,
     shape: Option<Vec<usize>>,
 }
 
 impl DataPoint {
     /// Return the exact native state supplied to the unary function.
     #[must_use]
-    pub const fn state(&self) -> &NativeState {
+    pub const fn state(&self) -> &State {
         &self.state
     }
 
     /// Consume the host data point and return its complete native state.
     #[must_use]
-    pub fn into_state(self) -> NativeState {
+    pub fn into_state(self) -> State {
         self.state
     }
 
@@ -46,6 +49,18 @@ impl DataPoint {
     #[must_use]
     pub fn shape(&self) -> Option<&[usize]> {
         self.shape.as_deref()
+    }
+
+    /// Construct a data point from its full native state.
+    #[must_use]
+    pub fn new(state: State) -> Self {
+        Self { state, shape: None }
+    }
+
+    /// Observe the classical input expected by a numerical analysis backend.
+    #[must_use]
+    pub fn projection(&self) -> &NativeState {
+        self.state.project()
     }
 }
 
@@ -120,9 +135,10 @@ pub fn pack_data(
 fn read_json_data(source: &str) -> Result<Vec<DataPoint>, String> {
     let value = serde_json::from_str::<Value>(source)
         .map_err(|error| format!("invalid batch JSON: {error}"))?;
-    let items = value
-        .as_array()
-        .ok_or("batch data must be one ordered JSON array")?;
+    let items = value.get("states").unwrap_or(&value).as_array();
+    let Some(items) = items else {
+        return data_point(&value).map(|point| vec![point]);
+    };
     items
         .iter()
         .enumerate()
@@ -144,7 +160,7 @@ pub fn execute_cpu(
     function_name: &str,
     inputs: &[DataPoint],
     steps: u64,
-) -> Result<Vec<NativeState>, LanguageError> {
+) -> Result<Vec<State>, LanguageError> {
     let function = unary_function(program, function_name)?;
     if inputs.is_empty() {
         return Ok(Vec::new());
@@ -159,7 +175,7 @@ pub fn execute_cpu(
                 scope.spawn(|| {
                     chunk
                         .iter()
-                        .map(|input| function.apply(input.state.clone(), steps))
+                        .map(|input| function.apply_retained(input.state.clone(), steps))
                         .collect::<Vec<_>>()
                 })
             })
@@ -198,27 +214,58 @@ pub fn execute_together(
     program: &Program,
     function_name: &str,
     inputs: &[DataPoint],
-) -> Result<NativeState, LanguageError> {
+) -> Result<State, LanguageError> {
     let function = exact_function(program, function_name)?;
     let arguments = inputs
         .iter()
         .map(|input| input.state.clone())
         .collect::<Vec<_>>();
-    function.apply(&arguments)
+    function.apply_retained(&arguments)
 }
 
 /// Create the stable JSON output for one batch run.
 #[must_use]
-pub fn output_data(
+pub fn output_data(backend: &str, steps: u64, inputs: &[DataPoint], results: &[State]) -> Value {
+    let observations = results
+        .iter()
+        .map(|state| state.project().clone())
+        .collect::<Vec<_>>();
+    output_observations(backend, steps, inputs, results, &observations)
+}
+
+/// Pair explicit camera observations with their retained source states.
+///
+/// GPU callers supply their checked numerical observations without asking the
+/// CPU to recompute those values. Native graphs remain separately available.
+///
+/// # Panics
+/// Panics when the caller supplies mismatched input, state, or observation counts.
+#[must_use]
+pub fn output_observations(
     backend: &str,
     steps: u64,
     inputs: &[DataPoint],
-    results: &[NativeState],
+    states: &[State],
+    observations: &[NativeState],
 ) -> Value {
+    assert_eq!(
+        inputs.len(),
+        states.len(),
+        "one native state per data point"
+    );
+    assert_eq!(
+        inputs.len(),
+        observations.len(),
+        "one observation per data point"
+    );
     json!({
         "backend": backend,
         "steps": steps,
-        "results": inputs.iter().zip(results).map(|(input, result)| readable_value(result, input.shape.as_deref())).collect::<Vec<_>>()
+        "results": inputs.iter().zip(observations).map(|(input, result)| readable_value(result, input.shape.as_deref())).collect::<Vec<_>>(),
+        "states": inputs.iter().zip(states).zip(observations).map(|((input, result), observation)| {
+            let shape = input.shape.as_ref().filter(|shape| fits_array(observation, shape));
+            json!({"state": result.native_data(), "shape": shape})
+        }).collect::<Vec<_>>()
     })
 }
 
@@ -235,26 +282,58 @@ fn readable_value(state: &NativeState, shape: Option<&[usize]>) -> Value {
 }
 
 fn data_point(value: &Value) -> Result<DataPoint, String> {
+    if value.get("schema").and_then(Value::as_str) == Some("native-space-retained-state") {
+        return State::from_data(value).map(DataPoint::new);
+    }
+    if let Some(state) = value.get("state") {
+        let state = State::from_data(state)?;
+        let shape: Option<Vec<usize>> =
+            serde_json::from_value(value.get("shape").cloned().unwrap_or(Value::Null))
+                .map_err(|error| format!("invalid retained array shape: {error}"))?;
+        if let Some(shape) = &shape
+            && (shape.is_empty()
+                || shape.len() > MAX_ARRAY_RANK
+                || shape.contains(&0)
+                || !fits_array(state.project(), shape))
+        {
+            return Err("retained state does not fit its declared shape".into());
+        }
+        return Ok(DataPoint { state, shape });
+    }
     if value.is_array() {
         let mut terms = Vec::new();
         let mut path = Vec::new();
         let shape = lower_array(value, 1, &mut path, &mut terms)?;
         return Ok(DataPoint {
-            state: NativeState::from_terms(terms),
+            state: terms
+                .into_iter()
+                .fold(State::zero(), |sum, (index, value)| {
+                    let mut item = State::scalar(value);
+                    for (direction, depth) in index.0 {
+                        item = item
+                            .index_power(
+                                direction,
+                                depth.to_u64().expect("host array position fits u64"),
+                            )
+                            .expect("host array axis is positive");
+                    }
+                    sum.add(&item)
+                }),
             shape: Some(shape),
         });
     }
     if let Some(real) = value.as_str() {
         return NativeScalar::from_text(real, "0").map(|scalar| DataPoint {
-            state: NativeState::scalar(scalar),
+            state: State::scalar(scalar),
             shape: None,
         });
     }
     if value.get("camera").is_some() {
-        return NativeState::from_data(value).map(|state| DataPoint { state, shape: None });
+        return NativeState::from_data(value)
+            .map(|state| DataPoint::new(State::from_projection(&state)));
     }
     NativeScalar::from_data(value).map(|scalar| DataPoint {
-        state: NativeState::scalar(scalar),
+        state: State::scalar(scalar),
         shape: None,
     })
 }
@@ -308,26 +387,50 @@ fn scalar_value(value: &Value) -> Result<NativeScalar, String> {
 }
 
 fn readable_array(state: &NativeState, shape: &[usize]) -> Option<Value> {
-    let element_count = shape
-        .iter()
-        .try_fold(1_usize, |count, &extent| count.checked_mul(extent))?;
-    let mut values = vec![Value::String("0".into()); element_count];
+    let element_count = array_size(shape)?;
+    if element_count > MAX_READABLE_ARRAY_ELEMENTS || !fits_array(state, shape) {
+        return None;
+    }
+    let mut values = Vec::new();
+    values.try_reserve_exact(element_count).ok()?;
+    values.resize(element_count, Value::String("0".into()));
     for (index, scalar) in &state.0 {
-        if index.0.len() != shape.len() {
-            return None;
-        }
-        let mut offset = 0_usize;
-        for (axis, &extent) in shape.iter().enumerate() {
-            let direction = u64::try_from(axis + 1).ok()?;
-            let position = index.0.get(&direction)?.to_usize()?;
-            if position == 0 || position > extent {
-                return None;
-            }
-            offset = offset.checked_mul(extent)?.checked_add(position - 1)?;
-        }
-        values[offset] = readable_scalar(scalar)?;
+        values[array_offset(index, shape)?] = readable_scalar(scalar)?;
     }
     Some(nest_values(&values, shape))
+}
+
+fn array_size(shape: &[usize]) -> Option<usize> {
+    if shape.is_empty() || shape.len() > MAX_ARRAY_RANK || shape.contains(&0) {
+        return None;
+    }
+    shape
+        .iter()
+        .try_fold(1_usize, |count, &extent| count.checked_mul(extent))
+}
+
+fn array_offset(index: &MultiIndex, shape: &[usize]) -> Option<usize> {
+    if index.0.len() != shape.len() {
+        return None;
+    }
+    let mut offset = 0_usize;
+    for (axis, &extent) in shape.iter().enumerate() {
+        let direction = u64::try_from(axis + 1).ok()?;
+        let position = index.0.get(&direction)?.to_usize()?;
+        if position == 0 || position > extent {
+            return None;
+        }
+        offset = offset.checked_mul(extent)?.checked_add(position - 1)?;
+    }
+    Some(offset)
+}
+
+fn fits_array(state: &NativeState, shape: &[usize]) -> bool {
+    array_size(shape).is_some()
+        && state
+            .0
+            .keys()
+            .all(|index| array_offset(index, shape).is_some())
 }
 
 fn readable_scalar(scalar: &NativeScalar) -> Option<Value> {
@@ -381,35 +484,7 @@ fn encode_binary(inputs: &[DataPoint]) -> Result<Vec<u8>, String> {
         } else {
             write_u16(&mut bytes, NO_SHAPE);
         }
-        write_u64(
-            &mut bytes,
-            u64::try_from(input.state.0.len())
-                .map_err(|_capacity_error| "native state has too many terms")?,
-        );
-        for (index, scalar) in &input.state.0 {
-            write_u16(
-                &mut bytes,
-                u16::try_from(index.0.len())
-                    .map_err(|_capacity_error| "native index has too many directions")?,
-            );
-            for (&direction, depth) in &index.0 {
-                write_u64(&mut bytes, direction);
-                write_text(&mut bytes, &depth.to_string())?;
-            }
-            let scalar = scalar.to_data();
-            write_text(
-                &mut bytes,
-                scalar["real"]
-                    .as_str()
-                    .ok_or("native scalar real coordinate is not text")?,
-            )?;
-            write_text(
-                &mut bytes,
-                scalar["imag"]
-                    .as_str()
-                    .ok_or("native scalar imaginary coordinate is not text")?,
-            )?;
-        }
+        write_native(&mut bytes, &input.state)?;
     }
     Ok(bytes)
 }
@@ -460,39 +535,9 @@ fn decode_binary(source: &[u8]) -> Result<Vec<DataPoint>, String> {
             })?;
             Some(shape)
         };
-        let term_count = reader.read_usize("term count")?;
-        let mut terms = BTreeMap::new();
-        for _ in 0..term_count {
-            let index_count = usize::from(reader.read_u16("index direction count")?);
-            let mut depths = BTreeMap::new();
-            for _ in 0..index_count {
-                let direction = reader.read_u64("index direction")?;
-                if direction == 0 {
-                    return Err("binary index directions must be positive".into());
-                }
-                let depth_text = reader.read_text("index depth")?;
-                let depth = BigUint::from_str(depth_text)
-                    .map_err(|_parse_error| "binary index depth is not a decimal integer")?;
-                if depth.is_zero() {
-                    return Err("binary index depths must be positive".into());
-                }
-                if depths.insert(direction, depth).is_some() {
-                    return Err("binary index repeats one direction".into());
-                }
-            }
-            let real = reader.read_text("real scalar coordinate")?;
-            let imag = reader.read_text("imaginary scalar coordinate")?;
-            let scalar = NativeScalar::from_text(real, imag)?;
-            if scalar.is_zero() {
-                return Err("binary native states must omit zero terms".into());
-            }
-            if terms.insert(MultiIndex(depths), scalar).is_some() {
-                return Err("binary native state repeats one index".into());
-            }
-        }
-        let state = NativeState(terms);
+        let state = read_native(&mut reader)?;
         if let Some(shape) = &shape
-            && readable_array(&state, shape).is_none()
+            && !fits_array(state.project(), shape)
         {
             return Err(format!(
                 "item {} contains an index outside its declared array shape",
@@ -505,6 +550,129 @@ fn decode_binary(source: &[u8]) -> Result<Vec<DataPoint>, String> {
         return Err("batch binary has trailing bytes".into());
     }
     Ok(inputs)
+}
+
+// Wire tags describe the closed native record set. Version 2 intentionally
+// replaces the projection-only payload; version 1 cannot retain cancelled inputs.
+fn write_native(bytes: &mut Vec<u8>, state: &State) -> Result<(), String> {
+    use crate::retained::Operation;
+    let plan = state.plan();
+    write_u64(
+        bytes,
+        u64::try_from(plan.len()).map_err(|_capacity_error| "too many native records")?,
+    );
+    for step in plan {
+        match step.operator {
+            Operation::Scalar { coordinates } => {
+                bytes.push(0);
+                write_text(bytes, &coordinates.squared_magnitude)?;
+                if let Some(direction) = coordinates.direction {
+                    bytes.push(1);
+                    write_text(bytes, &direction.real)?;
+                    write_text(bytes, &direction.imag)?;
+                } else {
+                    bytes.push(0);
+                }
+            }
+            Operation::Add => bytes.push(1),
+            Operation::Multiply => bytes.push(2),
+            Operation::Phase { turns } => {
+                bytes.push(3);
+                bytes.push(u8::try_from(turns).expect("canonical turn"));
+            }
+            Operation::Index { direction, depth } => {
+                bytes.push(4);
+                write_u64(bytes, direction);
+                write_u64(bytes, depth);
+            }
+            Operation::Camera { from, to } => {
+                bytes.push(5);
+                write_u64(bytes, from);
+                write_u64(bytes, to);
+            }
+        }
+        for edges in [&step.inputs, &step.retained] {
+            write_u64(
+                bytes,
+                u64::try_from(edges.len()).map_err(|_capacity_error| "too many native edges")?,
+            );
+            for &edge in edges {
+                write_u64(
+                    bytes,
+                    u64::try_from(edge).map_err(|_capacity_error| "native address exceeds u64")?,
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_native(reader: &mut BinaryReader<'_>) -> Result<State, String> {
+    use crate::retained::{Operation, RayData, ScalarData, Step};
+    let count = reader.read_usize("native record count")?;
+    if count == 0 {
+        return Err("a native state must have a root record".into());
+    }
+    let mut nodes = Vec::with_capacity(count.min(reader.remaining() / 17));
+    for address in 0..count {
+        let operator = match reader.read_exact(1, "native operator")?[0] {
+            0 => {
+                let squared_magnitude = reader.read_text("native squared magnitude")?.to_owned();
+                let direction = match reader.read_exact(1, "native ray presence")?[0] {
+                    0 => None,
+                    1 => Some(RayData {
+                        real: reader.read_text("native ray real")?.into(),
+                        imag: reader.read_text("native ray imaginary")?.into(),
+                    }),
+                    _ => return Err("invalid native ray presence".into()),
+                };
+                Operation::Scalar {
+                    coordinates: ScalarData {
+                        squared_magnitude,
+                        direction,
+                    },
+                }
+            }
+            1 => Operation::Add,
+            2 => Operation::Multiply,
+            3 => Operation::Phase {
+                turns: i64::from(reader.read_exact(1, "phase turns")?[0]),
+            },
+            4 => Operation::Index {
+                direction: reader.read_u64("index direction")?,
+                depth: reader.read_u64("index depth")?,
+            },
+            5 => Operation::Camera {
+                from: reader.read_u64("camera source")?,
+                to: reader.read_u64("camera destination")?,
+            },
+            _ => return Err("unknown native operator".into()),
+        };
+        let mut read_edges = |field| -> Result<Vec<usize>, String> {
+            let count = reader.read_usize(field)?;
+            if count > reader.remaining() / 8 {
+                return Err("native edges exceed remaining binary data".into());
+            }
+            (0..count)
+                .map(|_| {
+                    let edge = reader.read_usize("native address")?;
+                    if edge >= address {
+                        return Err("native edges must point backward".into());
+                    }
+                    Ok(edge)
+                })
+                .collect()
+        };
+        let inputs = read_edges("native operand count")?;
+        let retained = read_edges("native scope input count")?;
+        nodes.push(Step {
+            operator,
+            inputs,
+            retained,
+            span: None,
+        });
+    }
+    State::from_steps(&nodes, count - 1)
 }
 
 fn write_u16(output: &mut Vec<u8>, value: u16) {
@@ -611,7 +779,7 @@ mod tests {
         )
         .unwrap();
         let inputs = ["1", "2", "3"].map(|value| DataPoint {
-            state: NativeState::scalar(NativeScalar::from_text(value, "0").unwrap()),
+            state: State::scalar(NativeScalar::from_text(value, "0").unwrap()),
             shape: None,
         });
 
@@ -619,22 +787,21 @@ mod tests {
         let expected = ["15", "23", "31"]
             .map(|value| NativeState::scalar(NativeScalar::from_text(value, "0").unwrap()));
 
-        assert_eq!(results, expected);
+        for (result, expected) in results.iter().zip(expected) {
+            assert_eq!(result.project(), &expected);
+        }
     }
 
     #[test]
     fn zero_steps_preserve_every_input() {
         let program = parse("let step = (value) => add(value, 1)\noutput 0", "batch.ns").unwrap();
-        let inputs =
-            [NativeState::one(), NativeState::zero()].map(|state| DataPoint { state, shape: None });
+        let inputs = [State::one(), State::zero()].map(|state| DataPoint { state, shape: None });
 
-        assert_eq!(
-            execute_cpu(&program, "step", &inputs, 0).unwrap(),
-            inputs
-                .iter()
-                .map(|input| input.state.clone())
-                .collect::<Vec<_>>()
-        );
+        let results = execute_cpu(&program, "step", &inputs, 0).unwrap();
+        assert_eq!(results.len(), inputs.len());
+        for (result, input) in results.iter().zip(&inputs) {
+            assert!(result.same_structure(input.state()));
+        }
     }
 
     #[test]
@@ -643,12 +810,12 @@ mod tests {
 
         assert_eq!(point.shape(), Some([3].as_slice()));
         assert_eq!(
-            readable_array(&point.state, point.shape().unwrap()),
+            readable_array(point.projection(), point.shape().unwrap()),
             Some(json!(["3", "4", "5"]))
         );
         assert_eq!(
             point
-                .state
+                .projection()
                 .0
                 .get(&MultiIndex::from_depths([(1, 2)]).unwrap()),
             Some(&NativeScalar::from_text("4", "0").unwrap())
@@ -662,17 +829,17 @@ mod tests {
         let lower_left = MultiIndex::from_depths([(1, 2), (2, 1)]).unwrap();
 
         assert_ne!(upper_right, lower_left);
-        assert_eq!(point.state.0.len(), 4);
+        assert_eq!(point.projection().0.len(), 4);
         assert_eq!(
-            point.state.0.get(&upper_right),
+            point.projection().0.get(&upper_right),
             Some(&NativeScalar::from_text("2", "0").unwrap())
         );
         assert_eq!(
-            point.state.0.get(&lower_left),
+            point.projection().0.get(&lower_left),
             Some(&NativeScalar::from_text("3", "0").unwrap())
         );
         assert_eq!(
-            readable_array(&point.state, point.shape().unwrap()),
+            readable_array(point.projection(), point.shape().unwrap()),
             Some(json!([["1", "2"], ["3", "4"]]))
         );
     }
@@ -684,7 +851,7 @@ mod tests {
 
         assert_eq!(point.shape(), Some([2, 1, 2].as_slice()));
         assert_eq!(
-            readable_array(&point.state, point.shape().unwrap()),
+            readable_array(point.projection(), point.shape().unwrap()),
             Some(value)
         );
     }
@@ -734,7 +901,11 @@ mod tests {
             .map(|input| input.state.clone())
             .collect::<Vec<_>>();
 
-        assert_eq!(decoded, inputs);
+        assert_eq!(decoded.len(), inputs.len());
+        for (decoded, input) in decoded.iter().zip(&inputs) {
+            assert_eq!(decoded.shape(), input.shape());
+            assert!(decoded.state().same_structure(input.state()));
+        }
         assert_eq!(
             output_data("cpu", 0, &decoded, &decoded_states),
             output_data("cpu", 0, &inputs, &input_states)
@@ -742,15 +913,94 @@ mod tests {
     }
 
     #[test]
+    fn binary_round_trip_preserves_deferred_camera_and_boundary_phase() {
+        use crate::retained::{Depth, Scalar};
+        let boundary = Scalar::from_coordinates(
+            Depth::of(&NativeScalar::zero()),
+            Some(NativeScalar::quarter_turn()),
+        )
+        .unwrap();
+        let state = State::native_scalar(&boundary)
+            .index_power(7, 30)
+            .unwrap()
+            .add(&State::one().index_power(9, 2).unwrap())
+            .camera(7, 0);
+        let encoded = encode_binary(&[DataPoint::new(state.clone())]).unwrap();
+        let decoded = decode_binary(&encoded).unwrap();
+        assert!(decoded[0].state().same_structure(&state));
+        assert_eq!(
+            decoded[0].state().output_data(OutputKind::Vector).unwrap()["value"][2],
+            json!({"kind":"finite", "value":"1"})
+        );
+        for end in 0..encoded.len() {
+            decode_binary(&encoded[..end]).unwrap_err();
+        }
+    }
+
+    #[test]
     fn binary_decoder_rejects_version_and_trailing_data() {
         let inputs = read_json_data(r#"[[["1","2"]]]"#).unwrap();
         let mut wrong_version = encode_binary(&inputs).unwrap();
-        wrong_version[BINARY_MAGIC.len()] = 2;
+        wrong_version[BINARY_MAGIC.len()..BINARY_MAGIC.len() + 2]
+            .copy_from_slice(&(BINARY_VERSION + 1).to_le_bytes());
         decode_binary(&wrong_version).unwrap_err();
 
         let mut trailing = encode_binary(&inputs).unwrap();
         trailing.push(0);
         decode_binary(&trailing).unwrap_err();
+    }
+
+    #[test]
+    fn binary_decoder_rejects_every_truncation_and_forward_scope_edge() {
+        let state =
+            State::one().retaining(&[State::scalar(NativeScalar::from_text("7", "0").unwrap())]);
+        let encoded = encode_binary(&[DataPoint::new(state)]).unwrap();
+        for end in 0..encoded.len() {
+            decode_binary(&encoded[..end]).unwrap_err();
+        }
+        let mut invalid = encoded;
+        let last = invalid.len() - 8;
+        invalid[last..].copy_from_slice(&1_u64.to_le_bytes());
+        assert!(decode_binary(&invalid).unwrap_err().contains("backward"));
+    }
+
+    #[test]
+    fn dense_zero_inputs_keep_their_indexed_locations() {
+        let point = data_point(&json!(["0", "0", "7"])).unwrap();
+        assert_eq!(point.projection().0.len(), 1);
+        let native = point.state().native_data();
+        assert_eq!(
+            native["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|node| node["operator"]["operation"] == "index")
+                .count(),
+            3
+        );
+        let decoded = decode_binary(&encode_binary(&[point.clone()]).unwrap()).unwrap();
+        assert!(decoded[0].state().same_structure(point.state()));
+        assert_eq!(decoded[0].shape(), point.shape());
+    }
+
+    #[test]
+    fn sparse_shape_validation_does_not_materialize_unbounded_dense_output() {
+        let point = data_point(&json!({"state":State::zero().native_data(), "shape":[usize::MAX]}))
+            .unwrap();
+        assert_eq!(point.shape(), Some([usize::MAX].as_slice()));
+        assert!(readable_array(point.projection(), point.shape().unwrap()).is_none());
+        let output = output_data(
+            "cpu",
+            0,
+            std::slice::from_ref(&point),
+            &[point.state.clone()],
+        );
+        assert_eq!(output["results"], json!(["0"]));
+        assert_eq!(output["states"][0]["shape"], json!([usize::MAX]));
+        let decoded = decode_binary(&encode_binary(&[point]).unwrap()).unwrap();
+        assert_eq!(decoded[0].shape(), Some([usize::MAX].as_slice()));
+        data_point(&json!({"state":State::zero().native_data(), "shape":[usize::MAX,2]}))
+            .unwrap_err();
     }
 
     #[test]
@@ -763,13 +1013,15 @@ mod tests {
         )
         .unwrap();
         let inputs = ["1", "2", "3"].map(|value| DataPoint {
-            state: NativeState::scalar(NativeScalar::from_text(value, "0").unwrap()),
+            state: State::scalar(NativeScalar::from_text(value, "0").unwrap()),
             shape: None,
         });
 
         assert_eq!(
-            execute_together(&program, "train", &inputs).unwrap(),
-            NativeState::scalar(NativeScalar::from_text("6", "0").unwrap())
+            execute_together(&program, "train", &inputs)
+                .unwrap()
+                .project(),
+            &NativeState::scalar(NativeScalar::from_text("6", "0").unwrap())
         );
     }
 }

@@ -2,4 +2,4 @@
 # Literal Unicode and JSON-style Unicode escapes produce the same native state.
 let literal = "Native π λ"
 let escaped = "Native \u03c0 \u03bb"
-add(literal, orient(2, escaped)) = 0
+add(literal, phase(2, escaped)) = 0

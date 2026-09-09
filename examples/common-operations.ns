@@ -1,0 +1,222 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Common operations, calculated in Native Space 1.0 source.
+# Run: native-space run examples/common-operations.ns
+# Try one result by changing the last line to: output pi() as number
+# Inspect the exact source: native-space inspect examples/common-operations.ns
+# Or change the last line to: output trace(pi) as pattern
+# The default output includes the full retained graph, not only 22 answers.
+#
+# No mathematical helper below is a Rust built-in. The core stays unchanged.
+# fold repeats a finite source pattern; camera reads explicitly indexed fields.
+# Native inputs remain retained even when a classical camera shows cancellation.
+#
+# EXACT: add/multiply/subtract, bit logic, unsigned four-bit order/divmod, DFT4.
+# APPROXIMATE: pi, sqrt, exp, log, sin, cos, tan, atan, reciprocal/divide.
+# Those return exact rational evaluations of finite approximation programs,
+# not exact irrational numbers. Domains and absolute error bounds are below.
+# Domain conditions are caller responsibilities, not hidden runtime predicates.
+# A finite arithmetic polynomial cannot implement arbitrary real ordering or
+# exact variable division; explicit bit representations/approximations matter.
+
+# 1. Arithmetic. Addition and multiplication already ARE the native operations.
+# add(2, 3) = 5; multiply(2, 3) = 6. No aliases or replacement primitives needed.
+let negate = (x) => phase(2, x)
+let subtract = (a, b) => add(a, negate(b))
+let square = (x) => multiply(x, x)
+let cube = (x) => multiply(x, x, x)
+# Division by a supplied rational constant is exact: multiply(7, 1/3).
+
+# 2. One reusable polynomial pattern: coefficients go highest degree first.
+# polynomial(x, 3, 2, 1) means 3*x*x + 2*x + 1.
+# Fields 1 and 2 hold scalar x and the accumulated scalar, respectively.
+let horner_write = (x, accumulated, coefficient) =>
+    add(index(1, x), index(2, add(multiply(accumulated, x), coefficient)))
+let horner_step = (state, coefficient) =>
+    horner_write(camera(1, 0, state), camera(2, 0, state), coefficient)
+let polynomial = (x, coefficients...) =>
+    camera(2, 0, fold(horner_step, add(index(1, x), index(2, 0)), coefficients...))
+
+# 3. Reciprocal: r -> r*(2-y*r), starting at 1, for six steps.
+# Error identity: 1-y*r_next = (1-y*r)^2.
+# For real 1/2 <= y <= 3/2 the final error in 1/y is <= 2^-63.
+# The six zeros are clock inputs; each repeats the SAME source step.
+let reciprocal_write = (y, r) =>
+    add(index(1, y), index(2, multiply(r, subtract(2, multiply(y, r)))))
+let reciprocal_step = (state, tick) =>
+    reciprocal_write(camera(1, 0, state), camera(2, 0, state))
+let reciprocal = (y) =>
+    camera(2, 0, fold(reciprocal_step, add(index(1, y), index(2, 1)), 0, 0, 0, 0, 0, 0))
+let divide = (a, b) => multiply(a, reciprocal(b))
+# divide has the same denominator domain; error <= abs(a)*2^-63.
+# For a different nonzero denominator supply a scale that puts b*scale in
+# [1/2, 3/2]. Example: divide_scaled(7, 3, 1/4) approximates 7/3.
+let divide_scaled = (a, b, scale) => divide(multiply(a, scale), multiply(b, scale))
+
+# 4. Elementary functions. These are real-scalar examples, angles in radians.
+# Series references: https://dlmf.nist.gov/4.6
+#                   https://dlmf.nist.gov/4.19
+#                   https://dlmf.nist.gov/4.24
+# Coefficients are written out so there is no hidden factorial/series evaluator.
+
+# Degree 12 Taylor polynomial. For abs(x) <= 1: error <= 3/13! < 5e-10.
+let exp = (x) => polynomial(x,
+    1/479001600, 1/39916800, 1/3628800, 1/362880, 1/40320, 1/5040,
+    1/720, 1/120, 1/24, 1/6, 1/2, 1, 1)
+
+# Natural logarithm, degree 20 in z=x-1. For 1/2 <= x <= 3/2:
+# error <= abs(z)^21 / (21*(1-abs(z))) <= 1/22020096 < 5e-8.
+let log = (x) => polynomial(subtract(x, 1),
+    -1/20, 1/19, -1/18, 1/17, -1/16, 1/15, -1/14, 1/13, -1/12, 1/11,
+    -1/10, 1/9, -1/8, 1/7, -1/6, 1/5, -1/4, 1/3, -1/2, 1, 0)
+
+# Positive square root, degree 16 binomial polynomial in z=x-1.
+# For 1/2 <= x <= 3/2: error < 7e-8.
+# Bound: decreasing absolute binomial coefficients give a tail bounded by
+# abs(binomial(1/2,17))*2^-16 = 17678835/281474976710656.
+let sqrt = (x) => polynomial(subtract(x, 1),
+    -9694845/2147483648, 334305/67108864, -185725/33554432,
+    52003/8388608, -29393/4194304, 4199/524288, -2431/262144,
+    715/65536, -429/32768, 33/2048, -21/1024, 7/256,
+    -5/128, 1/16, -1/8, 1/2, 1)
+
+# Degrees 13 and 12. On abs(x) <= 1, the alternating-series remainder is
+# <= 1/15! for sin and <= 1/14! for cos. No automatic angle reduction.
+let sin = (x) => multiply(x, polynomial(square(x),
+    1/6227020800, -1/39916800, 1/362880, -1/5040, 1/120, -1/6, 1))
+let cos = (x) => polynomial(square(x),
+    1/479001600, -1/3628800, 1/40320, -1/720, 1/24, -1/2, 1)
+# On abs(x) <= 1, cos stays above 1/2, inside reciprocal's domain.
+# Combining the two series errors and reciprocal error gives error < 5e-11.
+let tan = (x) => divide(sin(x), cos(x))
+
+# Arctangent through x^15. On abs(x) <= 1/5: error <= abs(x)^17/17.
+let atan = (x) => multiply(x, polynomial(square(x),
+    -1/15, 1/13, -1/11, 1/9, -1/7, 1/5, -1/3, 1))
+# Machin's identity for the CIRCLE constant, not prime counting:
+# pi = 16*atan(1/5) - 4*atan(1/239).
+# Applying the preceding remainder bound gives pi error < 1.3e-12.
+let pi = () => subtract(multiply(16, atan(1/5)), multiply(4, atan(1/239)))
+
+# 5. Boolean operations as arithmetic circuits. Inputs MUST be scalar 0 or 1.
+# The prefix avoids collisions with the separate Boolean-proof grammar.
+let bool_not = (a) => subtract(1, a)
+let bool_and = (a, b) => multiply(a, b)
+let bool_or = (a, b) => subtract(add(a, b), multiply(a, b))
+let bool_xor = (a, b) => subtract(add(a, b), multiply(2, a, b))
+let bool_equal = (a, b) => bool_not(bool_xor(a, b))
+# Eager selection: returns a WHOLE native state, not just a scalar bit.
+let select = (condition, when_true, when_false) =>
+    add(multiply(condition, when_true), multiply(bool_not(condition), when_false))
+
+# 6. Explicit four-bit unsigned numbers, 0..15, low bit first.
+# Four bits are a worked circuit width, not a claim of arbitrary real order.
+# word4(1,0,1,1) is 13. Missing zero fields still have their fixed positions.
+# The same four-field container is useful for complex Fourier coefficients.
+let tuple4 = (a, b, c, d) => add(index(1, a), index(2, b), index(3, c), index(4, d))
+let word4 = (b0, b1, b2, b3) => tuple4(b0, b1, b2, b3)
+let field0 = (x) => camera(1, 0, x)
+let field1 = (x) => camera(2, 0, x)
+let field2 = (x) => camera(3, 0, x)
+let field3 = (x) => camera(4, 0, x)
+let unsigned = (x) => add(field0(x), multiply(2, field1(x)),
+    multiply(4, field2(x)), multiply(8, field3(x)))
+let word_only = (x) => tuple4(field0(x), field1(x), field2(x), field3(x))
+let word_zero = (x) => multiply(bool_not(field0(x)), bool_not(field1(x)),
+    bool_not(field2(x)), bool_not(field3(x)))
+
+# Full subtractor: a-b-borrow. The borrow terms are disjoint for valid bits.
+let difference_bit = (a, b, borrow) => bool_xor(bool_xor(a, b), borrow)
+let borrow_bit = (a, b, borrow) =>
+    add(multiply(bool_not(a), b), multiply(bool_equal(a, b), borrow))
+let subtract_finish = (r0, r1, r2, r3, borrow) =>
+    add(tuple4(r0, r1, r2, r3), index(5, borrow))
+let subtract_last = (a, b, r0, r1, r2, borrow) =>
+    subtract_finish(r0, r1, r2, difference_bit(field3(a), field3(b), borrow),
+        borrow_bit(field3(a), field3(b), borrow))
+let subtract_two = (a, b, r0, r1, borrow) =>
+    subtract_last(a, b, r0, r1, difference_bit(field2(a), field2(b), borrow),
+        borrow_bit(field2(a), field2(b), borrow))
+let subtract_one = (a, b, r0, borrow) =>
+    subtract_two(a, b, r0, difference_bit(field1(a), field1(b), borrow),
+        borrow_bit(field1(a), field1(b), borrow))
+let subtract_word = (a, b) => subtract_one(a, b,
+    difference_bit(field0(a), field0(b), 0), borrow_bit(field0(a), field0(b), 0))
+
+# Comparison returns scalar 0 or 1. These accept word4 values, NOT raw scalars.
+let lt = (a, b) => camera(5, 0, subtract_word(a, b))
+let gt = (a, b) => lt(b, a)
+let ge = (a, b) => bool_not(lt(a, b))
+let le = (a, b) => bool_not(gt(a, b))
+let eq = (a, b) => word_zero(subtract_word(a, b))
+let ne = (a, b) => bool_not(eq(a, b))
+let min = (a, b) => select(lt(a, b), a, b)
+let max = (a, b) => select(gt(a, b), a, b)
+
+# 7. Exact restoring division: shift in each numerator bit, try subtraction,
+# keep it only when there is no borrow, and shift that decision into quotient.
+# State fields: 10 remainder, 11 quotient, 12 divisor. Each contains a word4.
+# Before the last step the processed numerator prefix is <=7, so shifting
+# the remainder never needs a fifth bit. This invariant depends on FOUR bits.
+let shift_in = (word, bit) => tuple4(bit, field0(word), field1(word), field2(word))
+let division_choose = (divisor, quotient, trial, difference, fits) =>
+    add(index(10, select(fits, difference, trial)),
+        index(11, shift_in(quotient, fits)), index(12, divisor))
+let division_finish = (divisor, quotient, trial, difference) =>
+    division_choose(divisor, quotient, trial, word_only(difference),
+        bool_not(camera(5, 0, difference)))
+let division_trial = (divisor, quotient, trial) =>
+    division_finish(divisor, quotient, trial, subtract_word(trial, divisor))
+let division_step = (state, bit) =>
+    division_trial(camera(12, 0, state), camera(11, 0, state),
+        shift_in(camera(10, 0, state), bit))
+let division_result = (state, divisor) =>
+    add(state, index(13, bool_not(word_zero(divisor))))
+let divmod = (numerator, divisor) => division_result(
+    fold(division_step,
+        add(index(10, word4(0,0,0,0)), index(11, word4(0,0,0,0)), index(12, divisor)),
+        field3(numerator), field2(numerator), field1(numerator), field0(numerator)), divisor)
+# divmod field 13 is VALID. Divisor zero -> valid=0; quotient/remainder then
+# have no division meaning. mod/int_divide require a NONZERO word4 divisor.
+let mod = (a, b) => camera(10, 0, divmod(a, b))
+let int_divide = (a, b) => camera(11, 0, divmod(a, b))
+
+# 8. Exact FOUR-point discrete Fourier transform on complex scalar inputs.
+# Forward convention: sum x[n]*exp(-2*pi*i*k*n/4), no normalization.
+# Fourth roots are exactly 1, -i, -1, i: PHASE handles them without pi error.
+# Output fields 1..4 contain bins 0..3; this is not an arbitrary-size FFT.
+let fourier4 = (a, b, c, d) => tuple4(
+    add(a, b, c, d),
+    add(a, phase(3, b), negate(c), phase(1, d)),
+    add(a, negate(b), c, negate(d)),
+    add(a, phase(1, b), negate(c), phase(3, d)))
+let inverse_fourier_values = (a, b, c, d) => multiply(1/4, tuple4(
+    add(a, b, c, d),
+    add(a, phase(1, b), negate(c), phase(3, d)),
+    add(a, negate(b), c, negate(d)),
+    add(a, phase(3, b), negate(c), phase(1, d))))
+let inverse_fourier4 = (spectrum) => inverse_fourier_values(
+    field0(spectrum), field1(spectrum), field2(spectrum), field3(spectrum))
+
+# 9. Worked results. The outer INDEX is just a label separating each answer.
+# 101..104: 5, 6, -1, approximate 7/3.
+# 105..110: approximate pi, sqrt(5/4), exp(1), log(5/4), sin(1/2), cos(1/2).
+# 111..113: approximate tan(1/2), AND=0, OR=1.
+# 114..117: 13>3=1, 13<3=0, 13>=13=1, 13<=13=1.
+# 118..120: 13 mod 3=1, integer quotient=4, divisor-valid=1.
+# 121: exact Fourier bins (10, -2+2i, -2, -2-2i).
+# 122: inverse transform restores the exact four fields (1,2,3,4).
+let demo = () => add(
+    index(101, add(2, 3)), index(102, multiply(2, 3)), index(103, subtract(2, 3)),
+    index(104, divide_scaled(7, 3, 1/4)), index(105, pi()), index(106, sqrt(5/4)),
+    index(107, exp(1)), index(108, log(5/4)), index(109, sin(1/2)), index(110, cos(1/2)),
+    index(111, tan(1/2)), index(112, bool_and(1, 0)), index(113, bool_or(1, 0)),
+    index(114, gt(word4(1,0,1,1), word4(1,1,0,0))),
+    index(115, lt(word4(1,0,1,1), word4(1,1,0,0))),
+    index(116, ge(word4(1,0,1,1), word4(1,0,1,1))),
+    index(117, le(word4(1,0,1,1), word4(1,0,1,1))),
+    index(118, unsigned(mod(word4(1,0,1,1), word4(1,1,0,0)))),
+    index(119, unsigned(int_divide(word4(1,0,1,1), word4(1,1,0,0)))),
+    index(120, camera(13, 0, divmod(word4(1,0,1,1), word4(1,1,0,0)))),
+    index(121, fourier4(1, 2, 3, 4)), index(122, inverse_fourier4(fourier4(1, 2, 3, 4))))
+
+output demo() as pattern

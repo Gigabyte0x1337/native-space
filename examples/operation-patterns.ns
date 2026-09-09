@@ -1,0 +1,264 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Common operations as retained relationships and repeated native movements.
+# This mixes coordinate encodings with classical numerical algorithms. For
+# direct transformations before numerical readout, start with movement-patterns.ns.
+# Run: native-space run examples/operation-patterns.ns
+# Default: the exact four-sample Fourier walk. Change the last expression to
+# pi(), sqrt(5/4), log(5/4), rotation(1/2), or trace(flow) to inspect those patterns.
+#
+# DESIGN: keep the input chart explicit. Ratios keep two coordinates; depth
+# keeps a supplied logarithmic position; a plane keeps two phased channels;
+# a bit keeps one of two opposite directions. INDEX labels fields, not distance.
+# camera below only selects those fields. Calls retain their input graphs.
+# These are source-defined encodings, NOT new runtime types or built-ins.
+# Do not mix their field layouts or feed a raw scalar where a chart is required.
+# Ratio coordinates are intentionally not normalized: they retain their scale,
+# and their exact numerators/denominators can grow with the number of steps.
+#
+# common-operations.ns stays the independent reference. We do not just rename
+# its scalar answers: division now returns a relationship, trig shares one direction,
+# and Fourier sums a rotating walk. Readouts belong at the comparison boundary.
+# The exact operations need no host math. Tests decode the ratio n:d as n/d;
+# `as number` does NOT know this user-defined chart. An input with denominator
+# zero is retained, but has NO ordinary ratio readout, including the pair 0:0.
+#
+# Exact algebra: ratio arithmetic, supplied-depth moves, plane composition,
+# rational directions and their sin/cos/tan ratios, phase-bit logic,
+# four-bit comparison/divmod, and Fourier4.
+# Finite approximations: scalar-input sqrt, exp, log, atan, and pi.
+# Their patterns and every rational evaluation are exact; the limiting analytic
+# functions are not finite rational numbers. Domains/bounds appear below.
+# No automatic range reduction, general real comparison, or speedup is claimed.
+
+let opposite = (x) => phase(2, x)
+let difference = (a, b) => add(a, opposite(b))
+let pair = (a, b) => add(index(1, a), index(2, b))
+let tuple4 = (a, b, c, d) => add(index(1, a), index(2, b), index(3, c), index(4, d))
+let first = (p) => camera(1, 0, p)
+let second = (p) => camera(2, 0, p)
+
+# 1. Ratio chart. Identity is 1:1; zero readout is 0:d with d nonzero.
+# Addition joins cross-scaled contributions; multiplication composes both
+# coordinates. Division swaps the second relationship before composing.
+# There is no numerical reciprocal evaluation inside these operations.
+let ratio = (numerator, denominator) => pair(numerator, denominator)
+let lift = (x) => ratio(x, 1)
+let reciprocal = (p) => ratio(second(p), first(p))
+let ratio_scale = (factor, p) => ratio(multiply(factor, first(p)), second(p))
+let plus = (p, q) => ratio(
+    add(multiply(first(p), second(q)), multiply(first(q), second(p))),
+    multiply(second(p), second(q)))
+let times = (p, q) => ratio(multiply(first(p), first(q)), multiply(second(p), second(q)))
+let square = (p) => times(p, p)
+let cube = (p) => times(p, times(p, p))
+let subtract = (p, q) => plus(p, ratio_scale(-1, q))
+let divide = (p, q) => times(p, reciprocal(q))
+# Reframing by a NONZERO common scale preserves the ratio but retains the scale.
+let reframe = (p, scale) => pair(multiply(scale, first(p)), multiply(scale, second(p)))
+# Zero residual proves equal readouts ONLY when both denominators are nonzero.
+let ratio_residual = (p, q) => difference(
+    multiply(first(p), second(q)), multiply(first(q), second(p)))
+
+# 2. Straight depth chart for POSITIVE magnitudes: (base=2, signed position u).
+# This is explicit source data representing 2^u, NOT an automatic getter for
+# the runtime scalar's coordinates. Zero has no finite position in this chart.
+# Depth 0 represents 1. Composition translates; squaring doubles; root halves.
+# The moves are exact even when the magnitude readout would be irrational.
+let depth = (u) => add(index(20, 2), index(21, u))
+let depth_position = (p) => camera(21, 0, p)
+let depth_multiply = (p, q) => depth(add(depth_position(p), depth_position(q)))
+let depth_divide = (p, q) => depth(difference(depth_position(p), depth_position(q)))
+let depth_reciprocal = (p) => depth(opposite(depth_position(p)))
+let depth_square = (p) => depth(multiply(2, depth_position(p)))
+let depth_sqrt = (p) => depth(multiply(1/2, depth_position(p)))
+let depth_double = (p) => depth(add(depth_position(p), 1))
+# This reads log BASE TWO of a supplied depth pattern, not ln of a raw scalar.
+let depth_log2 = (p) => depth_position(p)
+
+# 3. A scalar-input root has to FIND that halfway point, not assume its depth.
+# Keep trial a:b. Reflect it through x (x*b:a), then average the two ratios.
+# One step gives (a*a+x*b*b):(2*a*b), avoiding division during the search.
+# For x in [1/2,3/2], six steps from 1:1 give absolute root error < 5e-45.
+# If t=sqrt(x), e=(r-t)/(r+t), each step squares e; initially |e|<1/5.
+# Thus |r_6-t| <= 2*sqrt(3/2)*(1/5)^64/(1-(1/5)^64).
+let root_move = (x, a, b) => ratio(add(multiply(a, a), multiply(x, b, b)), multiply(2, a, b))
+let root_step = (state, tick) => add(index(10, camera(10, 0, state)),
+    index(11, root_move(camera(10, 0, state),
+        first(camera(11, 0, state)), second(camera(11, 0, state)))))
+let sqrt_steps = (x, ticks...) => camera(11, 0,
+    fold(root_step, add(index(10, x), index(11, ratio(1, 1))), ticks...))
+let sqrt = (x) => sqrt_steps(x, 0, 0, 0, 0, 0, 0)
+
+# 4. One shrinking odd-step pattern for balance (log) and turning (atan/pi).
+# State: fixed ratio step, current term, accumulated ratio, odd counter.
+# Each tick moves by the same step, adds term/counter, then advances counter
+# by two. Coefficients are generated by the pattern, not supplied as a table.
+# odd(z,sign) = z*(1 + sign*z^2/3 + ... + (sign*z^2)^11/23).
+let odd_step = (state, tick) => add(index(10, camera(10, 0, state)),
+    index(11, times(camera(10, 0, state), camera(11, 0, state))),
+    index(12, plus(camera(12, 0, state),
+        divide(camera(11, 0, state), lift(camera(13, 0, state))))),
+    index(13, add(camera(13, 0, state), 2)))
+let odd_terms = (z, sign, ticks...) => camera(12, 0, fold(odd_step,
+    add(index(10, ratio_scale(sign, times(z, z))), index(11, z),
+        index(12, lift(0)), index(13, 1)), ticks...))
+let odd = (z, sign) => odd_terms(z, sign, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+# Balance uses the multiplicative identity: z=(x-1):(x+1). Inversion x->1/x
+# reverses z exactly. For positive x in [1/2,3/2], |z|<=1/3.
+# log tail <= 2*(1/3)^25/(25*(1-1/9)) < 1.1e-13.
+# Standard readout identity: https://dlmf.nist.gov/4.6.E4
+let balance = (p) => ratio(difference(first(p), second(p)), add(first(p), second(p)))
+let log = (x) => ratio_scale(2, odd(balance(lift(x)), 1))
+# atan reverses the repeated squared step. For |x|<=1/5,
+# error <= |x|^25/25 < 1.4e-19. https://dlmf.nist.gov/4.24
+let atan = (x) => odd(lift(x), -1)
+# Two small slope patterns give the half-circle arc length (Machin's identity).
+# pi here is the unit-circle constant, not a prime-counting function.
+# Bound from the two atan tails: < 2.2e-18.
+let pi = () => subtract(ratio_scale(16, atan(1/5)), ratio_scale(4, atan(1/239)))
+
+# 5. A two-channel plane. Composition multiplies movements in this chart.
+# The second channel becomes PHASE(1,...) only at the complex readout.
+# Do not multiply indexed pairs directly: that would multiply their labels.
+let plane = (x, y) => pair(x, y)
+let plane_value = (p) => add(first(p), phase(1, second(p)))
+let compose = (p, q) => plane(
+    difference(multiply(first(p), first(q)), multiply(second(p), second(q))),
+    add(multiply(first(p), second(q)), multiply(second(p), first(q))))
+# Growth and planar flow share one local movement generator.
+# P6(z/32) approximates a small movement. Five self-compositions cover 32 steps.
+# The six weights generate P6 without separate sin/cos coefficient lists.
+# This still uses a finite Taylor step, not an exact analytic exponential.
+# For complex generator |z|<=1:
+# |P6(z/32)^32-exp(z)| <= e/(7!*32^6) < 5.1e-13.
+# Taylor remainder <= e^(1/32)/(7!*32^7); telescope the 32 powers, each
+# factor bounded by e^(1/32). This approximates flow, not exact unit rotation.
+# See https://dlmf.nist.gov/4.2 (exponential), plus the explicit bound above.
+let flow_step = (state, weight) => add(index(10, camera(10, 0, state)),
+    index(11, add(plane(1, 0), multiply(weight,
+        compose(camera(10, 0, state), camera(11, 0, state))))))
+let double_move = (movement, tick) => compose(movement, movement)
+let flow = (generator) => fold(double_move,
+    camera(11, 0, fold(flow_step,
+        add(index(10, multiply(1/32, generator)), index(11, plane(1, 0))),
+        1/6, 1/5, 1/4, 1/3, 1/2, 1)), 0, 0, 0, 0, 0)
+let exp = (x) => flow(plane(x, 0))
+
+# Rotation itself needs NO angles and NO approximation: a fraction t selects
+# direction (1-t*t, 2*t):(1+t*t). Its length is exactly one because
+# (1-t*t)^2+(2*t)^2=(1+t*t)^2. Keep the common scale instead of dividing it out.
+# t=0 -> (1,0); t=1/2 -> (3/5,4/5); t=1 -> (0,1).
+# t is a rational steering coordinate, NOT a fraction of a complete turn.
+# Arbitrary fractions of a turn need not have rational components. The missing
+# opposite direction (-1,0) is explicit below, not an infinite numeric input.
+# The three stored entries obey a constraint; they are not independent axes.
+let direction = (x, y, scale) => add(index(1, x), index(2, y), index(3, scale))
+let direction_scale = (p) => camera(3, 0, p)
+let rotation = (t) => direction(difference(1, multiply(t, t)),
+    multiply(2, t), add(1, multiply(t, t)))
+let half_turn = () => direction(-1, 0, 1)
+let quarter = (p) => direction(opposite(second(p)), first(p), direction_scale(p))
+let turn = (p, q) => direction(
+    difference(multiply(first(p), first(q)), multiply(second(p), second(q))),
+    add(multiply(first(p), second(q)), multiply(second(p), first(q))),
+    multiply(direction_scale(p), direction_scale(q)))
+let move_step = (state, tick) => add(index(10, camera(10, 0, state)),
+    index(11, turn(camera(11, 0, state), camera(10, 0, state))))
+let walk = (start, movement, ticks...) => camera(11, 0,
+    fold(move_step, add(index(10, movement), index(11, start)), ticks...))
+# Four repeated quarter turns return the same direction; their steps remain
+# in the retained graph. These cameras return RATIOS, not raw scalar answers.
+let cos = (p) => ratio(first(p), direction_scale(p))
+let sin = (p) => ratio(second(p), direction_scale(p))
+let tan = (p) => ratio(second(p), first(p))
+# At a vertical direction tan keeps a zero denominator: no finite readout.
+
+# 6. Logic: false points along +1; true points along -1. NOT reverses direction.
+# XOR composes directions. AND/OR combine the two directions and interaction.
+# Inputs MUST be +1 or -1. These are Boolean phases, not probabilities.
+let bit = (zero_or_one) => difference(1, multiply(2, zero_or_one))
+let bit_value = (sign) => multiply(1/2, difference(1, sign))
+let bool_not = (a) => opposite(a)
+let bool_xor = (a, b) => multiply(a, b)
+let bool_equal = (a, b) => opposite(multiply(a, b))
+let bool_and = (a, b) => multiply(1/2, add(1, a, b, opposite(multiply(a, b))))
+let bool_or = (a, b) => multiply(1/2, add(-1, a, b, multiply(a, b)))
+let select = (sign, yes, no) =>
+    add(multiply(bit_value(sign), yes), multiply(bit_value(opposite(sign)), no))
+
+# 7. Order needs a decision pattern. A rotation alone is not a scalar order test.
+# Word = four Boolean phases, low bit first. Only these 16 words are admitted.
+# First different high bit determines direction; lower bits cannot change it.
+let word4 = (a, b, c, d) => tuple4(a, b, c, d)
+let w0 = (p) => camera(1, 0, p)
+let w1 = (p) => camera(2, 0, p)
+let w2 = (p) => camera(3, 0, p)
+let w3 = (p) => camera(4, 0, p)
+let word_zero = () => word4(1, 1, 1, 1)
+let unsigned = (p) => add(bit_value(w0(p)), multiply(2, bit_value(w1(p))),
+    multiply(4, bit_value(w2(p))), multiply(8, bit_value(w3(p))))
+# Order state flags (less, equal, greater) are 0/1, not phase bits.
+let order_move = (state, a, b) => add(
+    index(1, add(w0(state), multiply(w1(state), bit_value(opposite(a)), bit_value(b)))),
+    index(2, multiply(w1(state), bit_value(bool_equal(a, b)))),
+    index(3, add(w2(state), multiply(w1(state), bit_value(a), bit_value(opposite(b))))))
+let order_step = (state, bits) => order_move(state, first(bits), second(bits))
+let order = (p, q) => fold(order_step, index(2, 1),
+    pair(w3(p), w3(q)), pair(w2(p), w2(q)), pair(w1(p), w1(q)), pair(w0(p), w0(q)))
+let lt = (p, q) => bit(w0(order(p, q)))
+let eq = (p, q) => bit(w1(order(p, q)))
+let gt = (p, q) => bit(w2(order(p, q)))
+let ne = (p, q) => bool_not(eq(p, q))
+let ge = (p, q) => bool_not(lt(p, q))
+let le = (p, q) => bool_not(gt(p, q))
+let min = (p, q) => select(lt(p, q), p, q)
+let max = (p, q) => select(gt(p, q), p, q)
+
+# Remainder is a shift / compare / subtract pattern, not an invented angle.
+# A ripple tracks one borrow phase through four positions. INDEX(5) stores it.
+let borrow = (a, b, incoming) => bool_or(bool_and(bool_not(a), b),
+    bool_and(bool_equal(a, b), incoming))
+let diff_bit = (a, b, incoming) => bool_xor(bool_xor(a, b), incoming)
+let sub_last = (p, q, a, b, c, carry) => add(
+    word4(a, b, c, diff_bit(w3(p), w3(q), carry)), index(5, borrow(w3(p), w3(q), carry)))
+let sub_two = (p, q, a, b, carry) => sub_last(p, q, a, b,
+    diff_bit(w2(p), w2(q), carry), borrow(w2(p), w2(q), carry))
+let sub_one = (p, q, a, carry) => sub_two(p, q, a,
+    diff_bit(w1(p), w1(q), carry), borrow(w1(p), w1(q), carry))
+let word_subtract = (p, q) => sub_one(p, q,
+    diff_bit(w0(p), w0(q), 1), borrow(w0(p), w0(q), 1))
+let word_only = (p) => word4(w0(p), w1(p), w2(p), w3(p))
+let shift = (p, sign) => word4(sign, w0(p), w1(p), w2(p))
+let division_choose = (divisor, quotient, trial, delta) => add(index(10,
+    select(bool_not(camera(5, 0, delta)), word_only(delta), trial)),
+    index(11, shift(quotient, bool_not(camera(5, 0, delta)))), index(12, divisor))
+let division_move = (divisor, quotient, trial) =>
+    division_choose(divisor, quotient, trial, word_subtract(trial, divisor))
+let division_step = (state, sign) => division_move(camera(12, 0, state),
+    camera(11, 0, state), shift(camera(10, 0, state), sign))
+let divmod = (p, q) => add(fold(division_step,
+    add(index(10, word_zero()), index(11, word_zero()), index(12, q)),
+    w3(p), w2(p), w1(p), w0(p)), index(13, ne(q, word_zero())))
+# Fields 10=remainder, 11=quotient, 13=valid PHASE. Zero divisor -> +1=false.
+# Before the fourth shift, the processed prefix is <=7, so four bits suffice.
+# For divisor zero, quotient/remainder are unspecified as division results.
+let mod = (p, q) => camera(10, 0, divmod(p, q))
+let int_divide = (p, q) => camera(11, 0, divmod(p, q))
+
+# 8. Fourier is a rotating weight walking across the input, adding each hit.
+# State: 10=fixed turn, 11=current weight, 12=accumulation, 13=visited count.
+# Samples and weights are complex scalars, NOT indexed plane pairs.
+let frequency_step = (state, sample) => add(index(10, camera(10, 0, state)),
+    index(11, multiply(camera(11, 0, state), camera(10, 0, state))),
+    index(12, add(camera(12, 0, state), multiply(camera(11, 0, state), sample))),
+    index(13, add(camera(13, 0, state), 1)))
+let frequency = (turn, samples...) => fold(frequency_step,
+    add(index(10, turn), index(11, 1), index(12, 0), index(13, 0)), samples...)
+let bin = (turn, a, b, c, d) => camera(12, 0, frequency(turn, a, b, c, d))
+let fourier4 = (a, b, c, d) => tuple4(bin(1, a, b, c, d),
+    bin(phase(3, 1), a, b, c, d), bin(-1, a, b, c, d), bin(phase(1, 1), a, b, c, d))
+let inverse_values = (a, b, c, d) => multiply(1/4, tuple4(bin(1, a, b, c, d),
+    bin(phase(1, 1), a, b, c, d), bin(-1, a, b, c, d), bin(phase(3, 1), a, b, c, d)))
+let inverse_fourier4 = (p) => inverse_values(w0(p), w1(p), w2(p), w3(p))
+
+output fourier4(1, 2, 3, 4) as pattern

@@ -19,4 +19,4 @@ add(
 )
 
 # The generated concat pattern is exactly its pure ADD/INDEX expansion.
-add(generated(), orient(2, written_with_core_operations())) = 0
+add(generated(), phase(2, written_with_core_operations())) = 0

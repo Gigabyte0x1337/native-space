@@ -18,7 +18,7 @@ let re_y = add(multiply(negative_half, classical_x), multiply(half, classical_y)
 
 # Rotate the zeta result clockwise by 90 degrees: (x, y) -> (y, -x).
 let rotated_zeta_x = zeta_y
-let rotated_zeta_y = orient(2, zeta_x)
+let rotated_zeta_y = phase(2, zeta_x)
 
 # The rotated zeta view is exactly the RE view on the classical axis.
 add(

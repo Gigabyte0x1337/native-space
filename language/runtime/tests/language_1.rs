@@ -113,7 +113,7 @@ fn complete_function_libraries_are_validated_before_check_or_compile() {
 fn application_witnesses_are_exact_zero_proofs() {
     for name in [
         "matrix-distributivity.ns",
-        "dynamics-orient-equivariance.ns",
+        "dynamics-phase-equivariance.ns",
         "nbody-perspective-zero.ns",
         "navier-stokes-index-composition.ns",
         "molecular-interaction-order.ns",
@@ -159,7 +159,7 @@ fn finite_examples_agree_between_evaluator_and_vm() {
         "classic_identities.ns",
         "data-frequency-model.ns",
         "operators.ns",
-        "orientation_zero.ns",
+        "phase_zero.ns",
         "primes.ns",
         "program-length.ns",
         "rank-descent-apply.ns",
@@ -288,8 +288,8 @@ output add(
     add(add(2, 3), zero),
     multiply(multiply(2, 3), one),
     multiply(zero, one),
-    orient(0, one),
-    orient(1, orient(3, one))
+    phase(0, one),
+    phase(1, phase(3, one))
 )
 ";
     let Document::State(program) = parse_document(source, "optimizer.ns").unwrap() else {
@@ -311,20 +311,24 @@ output add(
         "OPT-MUL-FLATTEN-1",
         "OPT-MUL-ONE-1",
         "OPT-MUL-ZERO-1",
-        "OPT-ORIENT-COMBINE-1",
-        "OPT-ORIENT-IDENTITY-1",
-        "OPT-ORIENT-NORMALIZE-1",
+        "OPT-PHASE-COMBINE-1",
+        "OPT-PHASE-IDENTITY-1",
+        "OPT-PHASE-NORMALIZE-1",
     ]);
     assert_eq!(actual, expected);
 
-    let ledger = fs::read_to_string(repository().join("proofs/00-dependency-ledger.md")).unwrap();
+    // Check the emitted rule metadata directly; archived research prose is not
+    // a runtime dependency or a substitute for the state-equivalence check above.
     for event in &result.events {
-        for theorem in &event.theorem_ids {
-            assert!(
-                ledger.contains(&format!("| {theorem} |")),
-                "optimizer theorem {theorem} is missing from the dependency ledger"
-            );
-        }
+        let expected = match event.rule_id.as_str() {
+            "OPT-ADD-FLATTEN-1" | "OPT-ADD-ZERO-1" => "L-NS-2",
+            "OPT-MUL-ZERO-1" => "L-NS-8",
+            "OPT-MUL-FLATTEN-1" => "L-NS-5",
+            "OPT-MUL-ONE-1" => "L-NS-6",
+            "OPT-PHASE-COMBINE-1" | "OPT-PHASE-IDENTITY-1" | "OPT-PHASE-NORMALIZE-1" => "L-SEP-5",
+            rule => panic!("unexpected optimizer rule {rule}"),
+        };
+        assert_eq!(event.theorem_ids, [expected], "{}", event.rule_id);
     }
 }
 
@@ -423,10 +427,10 @@ fn parser_reports_a_source_location() {
 }
 
 #[test]
-fn orientation_accepts_only_canonical_source_turns() {
+fn phase_accepts_only_canonical_source_turns() {
     for turns in ["-1", "4", "8"] {
-        let source = format!("output orient({turns}, one)");
-        let error = parse_document(&source, "invalid-orientation.ns").unwrap_err();
+        let source = format!("output phase({turns}, one)");
+        let error = parse_document(&source, "invalid-phase.ns").unwrap_err();
 
         assert_eq!(error.0.code, "NST002", "{turns}");
         assert_eq!(error.0.span.unwrap().start_line, 1, "{turns}");
@@ -434,14 +438,14 @@ fn orientation_accepts_only_canonical_source_turns() {
 }
 
 #[test]
-fn semantic_analysis_rejects_noncanonical_orientation_ast() {
+fn semantic_analysis_rejects_noncanonical_phase_ast() {
     let Document::State(mut program) =
-        parse_document("output orient(1, one)", "invalid-orientation-ast.ns").unwrap()
+        parse_document("output phase(1, one)", "invalid-phase-ast.ns").unwrap()
     else {
         panic!("source must parse as an exact state");
     };
-    let native_space_language::core::Expr::Orient { turns, .. } = &mut program.result else {
-        panic!("source result must remain an orientation expression");
+    let native_space_language::core::Expr::Phase { turns, .. } = &mut program.result else {
+        panic!("source result must remain a phase expression");
     };
     *turns = 4;
 
@@ -472,7 +476,7 @@ fn functions_and_bindings_may_be_interleaved() {
 #[test]
 fn quarter_turn_cycle_and_indexed_helix_are_checked_separately() {
     let cycle = "let j = scalar(0, 1)\nmultiply(j, j, j, j) = one";
-    let Document::State(cycle) = parse_document(cycle, "orientation-cycle.ns").unwrap() else {
+    let Document::State(cycle) = parse_document(cycle, "phase-cycle.ns").unwrap() else {
         panic!("cycle must parse as an exact zero proof");
     };
     assert!(
@@ -481,7 +485,7 @@ fn quarter_turn_cycle_and_indexed_helix_are_checked_separately() {
             .is_zero()
     );
 
-    let helix = "let step = (value) => add(index(7, value), orient(1, value))\n\
+    let helix = "let step = (value) => add(index(7, value), phase(1, value))\n\
                  let once = step(one)\n\
                  let twice = step(once)\n\
                  let three = step(twice)\n\

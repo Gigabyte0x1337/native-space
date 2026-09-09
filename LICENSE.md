@@ -23,9 +23,8 @@ Attribution-ShareAlike 4.0 International** license (`CC-BY-SA-4.0`). The
 complete license is in
 [`LICENSES/CC-BY-SA-4.0.txt`](LICENSES/CC-BY-SA-4.0.txt).
 
-This includes the research notes and material under documentation-oriented
-paths such as `README.md`, `theory/`, `proofs/`, `reconstructions/`,
-`applications/`, and the Markdown files under `language/` and `examples/`.
+This includes `README.md` and `THEORY.md`. Historical material moved outside
+this repository retains its existing license notices.
 
 ## Data and third-party material
 

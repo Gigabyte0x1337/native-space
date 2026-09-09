@@ -6,7 +6,7 @@
 use serde::Serialize;
 
 /// Names the four Native Space algebra operations.
-pub const CORE_OPERATIONS: [&str; 4] = ["ADD", "MULTIPLY", "ORIENT", "INDEX"];
+pub const CORE_OPERATIONS: [&str; 4] = ["ADD", "MULTIPLY", "PHASE", "INDEX"];
 
 /// Identifies one expansion-step category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -48,7 +48,7 @@ pub struct PrimitiveStep {
     pub kind: StepKind,
     /// Core operation name.
     pub name: String,
-    /// Explicit primitive arguments, such as an orientation turn.
+    /// Explicit primitive arguments, such as a phase turn.
     pub arguments: Vec<String>,
     /// Exact definition source location.
     pub source: SourceLocation,

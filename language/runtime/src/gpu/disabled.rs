@@ -7,9 +7,10 @@ use crate::batch::DataPoint;
 use crate::core::{Diagnostic, LanguageError, NativeState, Program};
 
 /// Exact results and the physical adapter that executed them.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct GpuBatchResult {
     pub results: Vec<NativeState>,
+    pub states: Vec<crate::retained::State>,
     pub adapter_name: String,
 }
 

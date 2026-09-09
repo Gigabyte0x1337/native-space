@@ -2,6 +2,25 @@
 
 # Native Space Language 1.0
 
+## Retained execution update
+
+Normal `run`, native function calls, and batch feedback retain primitive relationships. Bare output and
+`as pattern` return the retained graph with its classical projection and exact
+multiplicative-depth coordinates. `as number`, `as string`, `as boolean`, and
+`as vector` explicitly request projected results. Zero proofs compare classical
+projections, not retained history. Default compilation bypasses the old optimizer.
+`view FILE --index-direction 1 --turns 0..3` displays depth–phase–index coordinates
+without changing the retained state. Depth is natural-log magnitude.
+`run` and `view` accept `--numeric exact|f64` (default: exact).
+The f64 mode rounds every scalar arithmetic step, retains exact INDEX/graph
+storage, and reports overflow/underflow-to-zero. It cannot be used by `check`
+or for Boolean/string output. Source synthesis remains exact elaboration.
+See [the core contract](README.md#retained-core-intent-and-contract).
+The scalar/flat-stack laws below describe the projected arithmetic domain;
+they do not permit erasing retained operands.
+
+## Source format
+
 Native Space 1.0 uses one `.ns` format. It has exact plane expressions,
 ordinary `let` functions, operation-sequence functions, and finite Boolean logic.
 There are no mandatory semicolons, function keywords, `end` markers, or
@@ -38,15 +57,15 @@ indexed `camera`, source-defined graph `rewrite`, graph `apply`, and the four op
 ```text
 add(a, b, ...)
 multiply(a, b, ...)
-orient(turns, value)
+phase(turns, value)
 index(direction, value)
 index(direction, value, positive_depth)
 ```
 
-`orient` accepts only the canonical turns `0`, `1`, `2`, and `3`. Four turns
+`phase` accepts only the canonical turns `0`, `1`, `2`, and `3`. Four turns
 are derived from MULTIPLY as the identity; the source interface never silently
 reduces a larger or negative count. A repeated count belongs in INDEX while
-ORIENT retains only its position in the four-state cycle.
+PHASE retains only its position in the four-state cycle.
 
 `zero`, `one`, and `scalar(real, imaginary)` remain readable exact constants.
 Strings lower to ADD/INDEX byte-position patterns. Numbers are exact integers
@@ -84,7 +103,7 @@ value invokes ordinary INDEX-depth addition and may merge terms.
 `concat` requires at least one value after expansion. A spread may also supply
 operands to ADD or MULTIPLY; an empty pack then lowers to their existing zero
 or one identity. Packs may be forwarded through variadic source calls, but a
-pack cannot be used as an ordinary value or spread under ORIENT or INDEX.
+pack cannot be used as an ordinary value or spread under PHASE or INDEX.
 
 The compiler erases calls and packs and expands concat to ADD/INDEX before
 bytecode. `native-space expand FILE` prints that generated pure `.ns` source.
@@ -106,18 +125,19 @@ Terms without the source direction are discarded; collisions after remapping
 combine by ordinary ADD. The source direction must be positive and the
 destination is a nonnegative literal.
 
-The camera is generally lossy because it can discard or merge coordinates. A
-closed finite camera expression is evaluated and lowered back to exact
-constants plus ADD/INDEX before bytecode. A source function receiving host data
-uses the same exact finite camera directly. `trace(function)` records both fold
-and camera source nodes, so a model's transformation remains inspectable.
+The camera's classical readout can discard or merge coordinates. The native
+graph retains the complete source and defers the read until evaluation, even
+when the input expression is closed. A source function receiving host data uses
+the same routing operation. `trace(function)` records both fold and camera
+source nodes, so a model's transformation remains inspectable. Explicit
+projected-source export may still lower a closed read to arithmetic.
 
 `trace` observes source structure. It receives a source-function name and
 returns that function's complete reachable source graph as an ordinary native
 state:
 
 ```ns
-let quarter_step = (value) => add(index(7, value), orient(1, value))
+let quarter_step = (value) => add(index(7, value), phase(1, value))
 output trace(quarter_step) as pattern
 ```
 
@@ -136,8 +156,8 @@ $$
 
 Repeated continuation indexing records exact chain position. Every instruction
 coordinate retains its kind, arguments, source span, function name, and call
-edges. The four operation identities are encoded by the four orientations in
-the opcode coordinate: ADD at turn 0, MULTIPLY at turn 1, ORIENT at turn 2,
+edges. The four operation identities are encoded by the four phases in
+the opcode coordinate: ADD at turn 0, MULTIPLY at turn 1, PHASE at turn 2,
 and INDEX at turn 3. Constants, parameters, and calls remain explicitly tagged
 coordinates because deleting them would make reconstruction impossible.
 
@@ -245,7 +265,7 @@ rewrite remains a fixed point.
 
 The CLI may read scalar observations from CSV columns `index,value` or
 `index,real,imag`. `--output pattern-csv` emits a compact table for scalar
-models only. JSON and version-1 `NSBATCH` input instead treat every root item as
+models only. JSON and version-2 `NSBATCH` input instead treat every root item as
 one complete ordered observation state. The runtime reads the entire file into
 memory and preserves the sequence as one synthesis state: it does not chunk,
 reset, flatten, or project the observations through the lossy frequency camera.
@@ -337,7 +357,7 @@ The only mathematical proof form is equality to zero. The parser lowers
 left = right
 ```
 
-to `add(left, orient(2, right))` and runs the same exact zero checker. It
+to `add(left, phase(2, right))` and runs the same exact zero checker. It
 accepts only when the direct evaluator and bytecode VM agree and the canonical
 state is zero. There is no separate equality claim or theorem-name switch.
 
@@ -346,7 +366,7 @@ state is zero. There is no separate equality claim or theorem-name switch.
 Exact-state documents may define binary operators as ordinary functions:
 
 ```ns
-let subtract = (left, right) => add(left, orient(2, right))
+let subtract = (left, right) => add(left, phase(2, right))
 
 operator "*" = (left, right) => multiply(left, right)
 operator "-" = (left, right) => subtract(left, right)
@@ -368,7 +388,7 @@ operators, bindings, function parameters, and Boolean parameters:
 
 | Namespace class | Language-owned names |
 |---|---|
-| Core operations | `add`, `multiply`, `orient`, `index`, `ADD`, `MULTIPLY`, `ORIENT`, `INDEX` |
+| Core operations | `add`, `multiply`, `phase`, `index`, `ADD`, `MULTIPLY`, `PHASE`, `INDEX` |
 | Exact grammar | `zero`, `one`, `scalar`, `trace`, `length`, `untrace`, `rank_descent`, `apply`, `rewrite`, `concat`, `fold`, `camera`, `let`, `output`, `as`, `operator`, `import`, `string`, `number`, `vector`, `pattern`, `boolean`, `=>`, `=` |
 | Function grammar | `...` |
 | Boolean grammar | `parameter`, `bool`, `prove`, `by`, `truth_table`, `true`, `false`, `not`, `and`, `or`, `xor`, `implies`, `iff` |
@@ -391,12 +411,13 @@ output value as pattern
 output value as boolean
 ```
 
-`as vector` is the existing exact quadratic cone camera for one unindexed
-oriented scalar `x + iy`. It returns the three exact rational coordinates
-`[x*x - y*y, 2*x*y, x*x + y*y]`. Zero returns `[0, 0, 0]`; a multi-term or
-indexed state is rejected rather than silently flattened. This camera is
-two-to-one away from zero because a scalar and its negative have the same
-vector. Boolean output accepts only exact zero (`false`) or exact one (`true`).
+`as vector` returns the default depth–phase–index coordinates for one
+unindexed scalar (k=0). For `3+4i` this is `[ln(25)/2,3/5,4/5]`,
+serialized as exact rational/logarithmic/radical expressions. A literal zero
+returns a zero-boundary tag for X and null Y/Z because no phase was supplied.
+Use `view --index-direction D` for indexed states; other labels remain
+retained. The quadratic cone is a separate derived camera, not this output.
+Boolean output accepts only exact zero (`false`) or exact one (`true`).
 Output cameras do not change the underlying state.
 
 ## Source-defined functions
@@ -423,7 +444,7 @@ $\pi(n)$, not the circle constant) and the zeta cameras belong in
 let axis_subtract = (left, right) =>
 left()
 right()
-ORIENT(2)
+PHASE(2)
 ADD()
 ```
 
@@ -441,7 +462,7 @@ earlier, although both preserve finite source argument order and use the same
 `...` spelling.
 
 The function parser recognizes only generic calls and the four core operations:
-ADD, MULTIPLY, ORIENT, and INDEX. The next `let` or end-of-file ends the body.
+ADD, MULTIPLY, PHASE, and INDEX. The next `let` or end-of-file ends the body.
 Expansion erases ordinary calls. A reference to a function already active on
 the current path closes a finite pattern graph and is recorded as a pattern
 reference. It is not expanded again, rejected, or treated as a fifth
@@ -452,7 +473,7 @@ by a requested derivation.
 
 ```ns
 let quarter_turn_pattern = () =>
-ORIENT(1)
+PHASE(1)
 quarter_turn_pattern()
 ```
 
@@ -470,9 +491,8 @@ native state; every function path it executes must be acyclic. A function used
 only as the target of `trace` may contain self-reference because `trace`
 returns its finite source graph rather than unfolding it into a supposed final
 state.
-Definitions, theorems, conjectures, and open obligations live in the Markdown
-dependency ledger. Executable mathematical proofs end in `= 0` or use the
-finite Boolean checker.
+The current foundation is in `THEORY.md`; historical proof ledgers are outside
+this repository. Executable zero checks end in `= 0` or use the finite Boolean checker.
 
 ## Finite Boolean logic
 
@@ -484,19 +504,22 @@ This checker has no analytic or number-theory predicates.
 
 ## Compilation
 
-- Exact functions are evaluated directly and independently erased before
-  bytecode generation. Reflection and call erasure observe the original source
-  graph before theorem-authorized optimizer rewrites.
+- Source evaluation constructs a native graph before bytecode generation.
+  Primitive construction does not require a classical observation. Compilation
+  preserves operands, call scopes, and explicit camera read dependencies.
+  The old projection optimizer is bypassed.
 - `trace(function)` is lowered first to its nested operation-strand expression.
 - `length(operation_strand)` is lowered to one unary INDEX-depth expression.
 - Variadic packs are substituted into operand and argument lists, then
   `concat(direction, values...)` lowers to one ADD of position-depth INDEX
   terms. Neither construct reaches bytecode.
 - Finite `fold` lowers to nested calls of its named binary source function.
-  Closed camera expressions lower to their exact resulting ADD/INDEX state.
-  Neither construct adds bytecode for a model-specific operation.
-  The ordinary compiler and VM then process only exact constants and core
-  operations; bytecode has no hidden trace opcode.
+  Indexed camera expressions stay as deferred read nodes in the native graph.
+  The compiler and VM process exact constants and core operations, with
+  load/store, `Retain` for scope dependencies, and `Camera` for indexed reads.
+  These are routing/storage instructions, not additional arithmetic primitives.
+  Scalar instructions carry exact squared magnitude and the phase ray,
+  including any zero-boundary ray.
 - `untrace(value[, rank])`, `rank_descent(value[, target_rank[, minimum_agreement]])`, and pattern `apply` are staged after source calls and traces are lowered.
   Exact deterministic discovery returns a recursive operation strand;
   relationship discovery returns an exact ranked coordinate state. Both lower
@@ -505,10 +528,11 @@ This checker has no analytic or number-theory predicates.
   instruction carries both the positive direction and literal multiplicity;
   composing instructions accumulates depth as an arbitrary-size exact natural
   number.
-- Exact results use the canonical finite flat-stack state. ADD automatically
-  combines signed coordinates at each retained INDEX location, removes every
-  zero term, and therefore emits only the nonzero residual. It never combines
-  distinct INDEX locations or different camera perspectives implicitly.
+- A classical observation uses the canonical finite flat-stack state. In that
+  view ADD combines signed coefficients at the same INDEX location and removes
+  zero terms. The authoritative native graph retains those contributions.
+- `expand` exports projected arithmetic source, not serialized native call-scope
+  history. Use native state JSON or binary output for full-state feedback.
 
 ## Complete-data execution host
 
@@ -536,7 +560,7 @@ ordered pair coordinates, accumulation, and the resulting transition counts.
 
 Batch execution is deliberately not language syntax. The CLI accepts an
 exact-state source file, a unary source-function name, an ordered JSON or
-version-1 binary data file, a nonnegative step count, and an explicit `cpu` or
+version-2 binary data file, a nonnegative step count, and an explicit `cpu` or
 `gpu` backend:
 
 ```text
@@ -548,13 +572,20 @@ function exactly `steps` times. Those applications are sequential for that
 point. Backends may distribute only distinct points, and output order must
 equal input order.
 
+The next step receives the full native state, never just its classical answer.
+Output contains `results` for readable camera observations and `states` for
+native feedback. A saved batch output can be passed directly to `--data`, which
+uses its `states` field. Passing only `results` is an explicit lossy input choice.
+
 The CPU backend evaluates the ordinary exact Native Space state semantics on a
 bounded number of workers. The GPU backend is a separate exact target for real
-signed-32-bit scalar inputs and constants with ADD, MULTIPLY, and even ORIENT
+signed-32-bit scalar inputs and constants with ADD, MULTIPLY, and even PHASE
 turns. Generated shader operations carry explicit overflow flags. Any overflow
 or unsupported state or operation fails the complete batch; no wrapped,
 floating-point, or CPU-fallback result is emitted. The GPU step limit is
 1,000,000 per point to keep one dispatch explicitly bounded.
+The host constructs retained graphs while the GPU computes those scalar
+observations. Explicit staged source-camera reads remain host work.
 
 GPU support is an additive Cargo feature and is disabled by default. Building
 with `--features gpu` enables the optional `wgpu` and `bytemuck` dependencies.
@@ -562,7 +593,8 @@ The Rust API and `gpu` backend name remain available in CPU-only builds; an
 attempted GPU run returns `NSG001` and never falls back to CPU. Official release
 binaries enable the feature. See [`GPU.md`](GPU.md) for the build invariant.
 
-The JSON root is one ordered batch. An item may be an exact real rational
+The JSON root is an ordered batch, a saved batch output with `states`, or one
+native-state object. An item may be a serialized native graph, an exact real rational
 string, a scalar object with exact `real` and `imag` strings, a canonical
 `flat-stack-v1` state object, or a nonempty rectangular array of exact scalar
 leaves with rank at most 64. For each leaf, the array axis is its INDEX
@@ -589,12 +621,14 @@ does not add a value kind or operation to Native Space 1.0. The CPU backend
 accepts these indexed states. The current GPU target rejects them because its
 proved exact domain is scalar.
 
-`pack-data INPUT.json OUTPUT.nsb` validates and stores the same sparse states
+`pack-data INPUT.json OUTPUT.nsb` validates and stores the full native graphs
 and host shapes in versioned `NSBATCH` binary form. `batch --data` detects JSON
 or binary from the content. The binary decoder is strict: unsupported versions,
-malformed lengths, invalid exact coefficients, noncanonical terms, shape/index
+malformed lengths, invalid exact coefficients, noncanonical graphs, shape/index
 mismatches, and trailing bytes are errors. Its complete layout and design
 invariants are recorded in [`ARRAY-DATA.md`](ARRAY-DATA.md).
+Dense readable output is limited to one million elements; larger shapes keep
+their metadata and exact state, using sparse/scalar classical output instead.
 
 ## Classical frequency synthesis host
 
@@ -649,9 +683,9 @@ executes the full allowlist while comparing original and optimized states.
 | `OPT-MUL-ZERO-1` | Replace a product containing zero by zero | `L-NS-8` |
 | `OPT-MUL-FLATTEN-1` | Flatten nested MULTIPLY | `L-NS-5` |
 | `OPT-MUL-ONE-1` | Remove multiplicative one | `L-NS-6` |
-| `OPT-ORIENT-NORMALIZE-1` | Reduce the sum of combined canonical turns modulo four | `L-SEP-5` |
-| `OPT-ORIENT-IDENTITY-1` | Remove a zero-turn ORIENT | `L-SEP-5` |
-| `OPT-ORIENT-COMBINE-1` | Combine nested ORIENT turns | `L-SEP-5` |
+| `OPT-PHASE-NORMALIZE-1` | Reduce the sum of combined canonical turns modulo four | `L-SEP-5` |
+| `OPT-PHASE-IDENTITY-1` | Remove a zero-turn PHASE | `L-SEP-5` |
+| `OPT-PHASE-COMBINE-1` | Combine nested PHASE turns | `L-SEP-5` |
 
 ## Command line
 
@@ -659,7 +693,8 @@ All commands use the same Native Space 1.0 parser:
 
 | Command | Input | Result |
 |---|---|---|
-| `native-space run FILE` | Exact-state document | Evaluate and print its selected output camera |
+| `native-space run FILE [--numeric exact\|f64]` | State document | Evaluate and print its selected output camera; exact by default |
+| `native-space view FILE --index-direction 1 --turns 1 [--numeric exact\|f64]` | State document | Show cylindrical branch coordinates in the selected frame with the native source retained |
 | `native-space run FILE --data DATA --function FUNCTION` | Exact-state document plus one complete ordered data file | Pass every root data item to the selected source function once and print its result |
 | `native-space check FILE` | Any document kind | Validate it; execute zero/Boolean checks when present |
 | `native-space inspect FILE` | Any document kind | Print its schema-1 parsed representation |

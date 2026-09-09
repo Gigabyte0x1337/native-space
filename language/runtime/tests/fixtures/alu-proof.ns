@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# A four-bit ALU made only from native ADD, MULTIPLY, PHASE, and INDEX.
+# Inputs are exact scalar bits (0 or 1), least significant bit first.
+# Opcode bits op0,op1,op2: 0 ADD, 1 SUB, 2 AND, 3 OR, 4 XOR, 5 NOT,
+# 6 logical shift left, 7 logical shift right. NOT/shifts ignore B.
+# Every returned field belongs to the NEW result; there is no hidden state.
+
+let bit_not = (a) => add(1, phase(2, a))
+let bit_and = (a, b) => multiply(a, b)
+let bit_or = (a, b) => add(a, b, phase(2, multiply(a, b)))
+let bit_xor = (a, b) => add(a, b, phase(2, multiply(2, a, b)))
+# A selector can route a WHOLE indexed native result, not just a single bit.
+let choose = (selector, when_zero, when_one) =>
+    add(multiply(bit_not(selector), when_zero), multiply(selector, when_one))
+
+# Full-adder equations. The two carry terms cannot both be 1 for bit inputs.
+let sum_bit = (a, b, carry) => bit_xor(bit_xor(a, b), carry)
+let carry_bit = (a, b, carry) => add(multiply(a, b), multiply(carry, bit_xor(a, b)))
+
+# Fixed output wiring: fields 1..4 = result bits, 5 = carry/no-borrow,
+# 6 = zero, 7 = sign bit, 8 = signed overflow, 9 = unsigned display value.
+# Zero fields are implicit; this circuit's fixed nine-field layout defines them.
+let alu_result = (r0, r1, r2, r3, carry, overflow) =>
+    add(
+        index(1, r0), index(2, r1), index(3, r2), index(4, r3),
+        index(5, carry),
+        index(6, multiply(bit_not(r0), bit_not(r1), bit_not(r2), bit_not(r3))),
+        index(7, r3), index(8, overflow),
+        index(9, add(r0, multiply(2, r1), multiply(4, r2), multiply(8, r3)))
+    )
+
+# Explicit ripple wiring, not Rust arithmetic. Each stage passes the carry on.
+let ripple_last = (a3, b3, r0, r1, r2, c3) =>
+    finish_arithmetic(r0, r1, r2, sum_bit(a3, b3, c3), c3, carry_bit(a3, b3, c3))
+let finish_arithmetic = (r0, r1, r2, r3, c3, c4) =>
+    alu_result(r0, r1, r2, r3, c4, bit_xor(c3, c4))
+let ripple_two = (a2, a3, b2, b3, r0, r1, c2) =>
+    ripple_last(a3, b3, r0, r1, sum_bit(a2, b2, c2), carry_bit(a2, b2, c2))
+let ripple_one = (a1, a2, a3, b1, b2, b3, r0, c1) =>
+    ripple_two(a2, a3, b2, b3, r0, sum_bit(a1, b1, c1), carry_bit(a1, b1, c1))
+let ripple = (a0, a1, a2, a3, b0, b1, b2, b3, c0) =>
+    ripple_one(a1, a2, a3, b1, b2, b3, sum_bit(a0, b0, c0), carry_bit(a0, b0, c0))
+
+# SUB reuses the same adder: A + NOT(B) + 1, retaining four result bits.
+# Its carry flag means NO borrow. Signed overflow is carry-in XOR carry-out.
+let arithmetic = (a0, a1, a2, a3, b0, b1, b2, b3, subtract) =>
+    ripple(a0, a1, a2, a3,
+           bit_xor(b0, subtract), bit_xor(b1, subtract),
+           bit_xor(b2, subtract), bit_xor(b3, subtract), subtract)
+
+let logic_and = (a0, a1, a2, a3, b0, b1, b2, b3) =>
+    alu_result(bit_and(a0, b0), bit_and(a1, b1), bit_and(a2, b2), bit_and(a3, b3), 0, 0)
+let logic_or = (a0, a1, a2, a3, b0, b1, b2, b3) =>
+    alu_result(bit_or(a0, b0), bit_or(a1, b1), bit_or(a2, b2), bit_or(a3, b3), 0, 0)
+let logic_xor = (a0, a1, a2, a3, b0, b1, b2, b3) =>
+    alu_result(bit_xor(a0, b0), bit_xor(a1, b1), bit_xor(a2, b2), bit_xor(a3, b3), 0, 0)
+let logic_not = (a0, a1, a2, a3) =>
+    alu_result(bit_not(a0), bit_not(a1), bit_not(a2), bit_not(a3), 0, 0)
+# Shifts are wire rearrangements. Carry is the shifted-out bit.
+let shift_left = (a0, a1, a2, a3) => alu_result(0, a0, a1, a2, a3, 0)
+let shift_right = (a0, a1, a2, a3) => alu_result(a1, a2, a3, 0, a0, 0)
+
+# The opcode also stays in native computation: no host match/dispatch.
+# This is an eager arithmetic multiplexer, not a lazy branch or scheduler.
+let alu = (a0, a1, a2, a3, b0, b1, b2, b3, op0, op1, op2) =>
+    choose(op2,
+        choose(op1,
+            arithmetic(a0, a1, a2, a3, b0, b1, b2, b3, op0),
+            choose(op0,
+                logic_and(a0, a1, a2, a3, b0, b1, b2, b3),
+                logic_or(a0, a1, a2, a3, b0, b1, b2, b3))),
+        choose(op1,
+            choose(op0, logic_xor(a0, a1, a2, a3, b0, b1, b2, b3), logic_not(a0, a1, a2, a3)),
+            choose(op0, shift_left(a0, a1, a2, a3), shift_right(a0, a1, a2, a3))))
+
+# The full-adder conservation identity holds symbolically in the native algebra.
+let sa = index(301, 1)
+let sb = index(302, 1)
+let sc = index(303, 1)
+add(
+    index(101, add(sum_bit(sa, sb, sc), multiply(2, carry_bit(sa, sb, sc)), phase(2, add(sa, sb, sc)))),
+    index(102, add(index(41, add(sum_bit(0, 0, 0), phase(2, 0))), index(42, add(carry_bit(0, 0, 0), phase(2, 0))))),
+    index(103, add(index(41, add(sum_bit(0, 0, 1), phase(2, 1))), index(42, add(carry_bit(0, 0, 1), phase(2, 0))))),
+    index(104, add(index(41, add(sum_bit(0, 1, 0), phase(2, 1))), index(42, add(carry_bit(0, 1, 0), phase(2, 0))))),
+    index(105, add(index(41, add(sum_bit(0, 1, 1), phase(2, 0))), index(42, add(carry_bit(0, 1, 1), phase(2, 1))))),
+    index(106, add(index(41, add(sum_bit(1, 0, 0), phase(2, 1))), index(42, add(carry_bit(1, 0, 0), phase(2, 0))))),
+    index(107, add(index(41, add(sum_bit(1, 0, 1), phase(2, 0))), index(42, add(carry_bit(1, 0, 1), phase(2, 1))))),
+    index(108, add(index(41, add(sum_bit(1, 1, 0), phase(2, 0))), index(42, add(carry_bit(1, 1, 0), phase(2, 1))))),
+    index(109, add(index(41, add(sum_bit(1, 1, 1), phase(2, 1))), index(42, add(carry_bit(1, 1, 1), phase(2, 1))))),
+# 15 + 1 wraps to zero with carry and zero flag.
+    index(120, add(alu(1,1,1,1, 1,0,0,0, 0,0,0), phase(2, add(index(5,1), index(6,1))))),
+# Signed 7 + 1 -> -8, unsigned display 8, overflow set.
+    index(121, add(alu(1,1,1,0, 1,0,0,0, 0,0,0), phase(2, add(index(4,1), index(7,1), index(8,1), index(9,8))))),
+# 0 - 1 -> 15, borrow occurred (carry/no-borrow remains zero).
+    index(122, add(alu(0,0,0,0, 1,0,0,0, 1,0,0), phase(2, add(index(1,1), index(2,1), index(3,1), index(4,1), index(7,1), index(9,15))))),
+# Signed -8 - 1 -> 7, no unsigned borrow, signed overflow.
+    index(123, add(alu(0,0,0,1, 1,0,0,0, 1,0,0), phase(2, add(index(1,1), index(2,1), index(3,1), index(5,1), index(8,1), index(9,7)))))
+) = 0

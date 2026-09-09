@@ -23,9 +23,29 @@ struct Cli {
     command: Command,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+enum Numeric {
+    #[default]
+    Exact,
+    F64,
+}
+
+impl Numeric {
+    fn output(
+        self,
+        state: &native_space_language::retained::State,
+        kind: native_space_language::core::OutputKind,
+    ) -> Result<serde_json::Value, String> {
+        match self {
+            Self::Exact => state.output_data(kind),
+            Self::F64 => native_space_language::retained::numeric::output(state, kind),
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Parse and evaluate an exact state document.
+    /// Evaluate a retained state; exact by default, explicitly rounded with --numeric f64.
     Run {
         file: String,
         /// Pass every ordered data item to one selected source function.
@@ -34,11 +54,25 @@ enum Command {
         /// Source function receiving the complete finite data pack.
         #[arg(long, requires = "data")]
         function: Option<String>,
+        #[arg(long, value_enum, default_value_t = Numeric::Exact)]
+        numeric: Numeric,
     },
     /// Parse and verify a state or proof document.
     Check { file: String },
     /// Print the schema-1 document representation.
     Inspect { file: String },
+    /// Show each retained branch's exact coordinates without replacing its state.
+    View {
+        file: String,
+        /// Quarter-turns of the observation frame; the stored state is unchanged.
+        #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(i64).range(0..=3))]
+        turns: i64,
+        /// INDEX direction used for k in radius k+1; all other labels remain retained.
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..))]
+        index_direction: u64,
+        #[arg(long, value_enum, default_value_t = Numeric::Exact)]
+        numeric: Numeric,
+    },
     /// Print the generated pure source after transparent elaboration.
     Expand { file: String },
     /// Compile to schema-1 bytecode or a recomputable proof certificate.
@@ -184,9 +218,10 @@ async fn main() -> ExitCode {
             file,
             data,
             function,
+            numeric,
         } => match (data.as_deref(), function.as_deref()) {
-            (Some(data), Some(function)) => run_data_file(&file, function, data),
-            (None, None) => run_file(&file),
+            (Some(data), Some(function)) => run_data_file(&file, function, data, numeric),
+            (None, None) => run_file(&file, numeric),
             _ => report_error("run data and function must be supplied together"),
         },
         Command::Check { file } => check_file(&file),
@@ -194,6 +229,12 @@ async fn main() -> ExitCode {
             |error| report_error(&error),
             |document| print_json(&inspect(&document)),
         ),
+        Command::View {
+            file,
+            turns,
+            index_direction,
+            numeric,
+        } => view_file(&file, turns, index_direction, numeric),
         Command::Expand { file } => read_document(&file)
             .and_then(|document| expand_source(&document).map_err(|error| error.to_string()))
             .map_or_else(
@@ -327,10 +368,11 @@ async fn batch_file(
                     native_space_language::gpu::execute(&program, function, &inputs, steps)
                         .await
                         .map_err(|error| error.to_string())?;
-                let mut output = native_space_language::batch::output_data(
+                let mut output = native_space_language::batch::output_observations(
                     "gpu",
                     steps,
                     &inputs,
+                    &execution.states,
                     &execution.results,
                 );
                 output
@@ -395,7 +437,7 @@ fn untrace_data(
         native_space_language::batch::read_data(file).map_err(|error| error.to_string())?;
     let values = inputs
         .into_iter()
-        .map(native_space_language::batch::DataPoint::into_state)
+        .map(|point| point.projection().clone())
         .collect::<Vec<_>>();
     native_space_language::discovery::discover_states(&values, rank, file)
         .map_err(|error| error.to_string())
@@ -467,7 +509,7 @@ fn rank_observations(
             .map(|inputs| {
                 inputs
                     .into_iter()
-                    .map(native_space_language::batch::DataPoint::into_state)
+                    .map(|point| point.projection().clone())
                     .collect()
             })
             .map_err(|error| error.to_string());
@@ -493,16 +535,35 @@ fn read_document(file: &str) -> Result<Document, String> {
     load_document(file).map_err(|error| error.to_string())
 }
 
-fn run_file(file: &str) -> ExitCode {
+fn view_file(file: &str, turns: i64, index_direction: u64, numeric: Numeric) -> ExitCode {
+    let result = read_document(file).and_then(|document| {
+        let Document::State(program) = document else {
+            return Err("view expects an executable state document".into());
+        };
+        let artifact = native_space_language::bytecode::compile(&program)
+            .map_err(|error| error.to_string())?;
+        let state = native_space_language::bytecode::execute_retained(&artifact)
+            .map_err(|error| error.to_string())?;
+        native_space_language::retained::numeric::view(
+            &state,
+            index_direction,
+            turns,
+            numeric == Numeric::F64,
+        )
+    });
+    result.map_or_else(|error| report_error(&error), |view| print_json(&view))
+}
+
+fn run_file(file: &str, numeric: Numeric) -> ExitCode {
     let result = read_document(file).and_then(|document| match document {
         Document::State(program) => native_space_language::bytecode::compile(&program)
             .and_then(|bytecode| {
                 let output_kind = bytecode.output_kind;
-                native_space_language::bytecode::execute(&bytecode)
+                native_space_language::bytecode::execute_retained(&bytecode)
                     .map(|state| (state, output_kind))
             })
             .and_then(|(state, output_kind)| {
-                native_space_language::core::output_data(&state, output_kind).map_err(|message| {
+                numeric.output(&state, output_kind).map_err(|message| {
                     native_space_language::core::LanguageError(
                         native_space_language::core::Diagnostic {
                             code: "NSO001".into(),
@@ -521,7 +582,7 @@ fn run_file(file: &str) -> ExitCode {
     result.map_or_else(|error| report_error(&error), |value| print_output(&value))
 }
 
-fn run_data_file(file: &str, function: &str, data: &str) -> ExitCode {
+fn run_data_file(file: &str, function: &str, data: &str, numeric: Numeric) -> ExitCode {
     let result = read_document(file).and_then(|document| {
         let Document::State(program) = document else {
             return Err("run --data expects an exact-state source document".into());
@@ -530,9 +591,9 @@ fn run_data_file(file: &str, function: &str, data: &str) -> ExitCode {
             native_space_language::batch::read_data(data).map_err(|error| error.to_string())?;
         let state = native_space_language::batch::execute_together(&program, function, &inputs)
             .map_err(|error| error.to_string())?;
-        native_space_language::core::output_data(&state, program.output_kind)
+        numeric.output(&state, program.output_kind)
     });
-    result.map_or_else(|error| report_error(&error), |value| print_json(&value))
+    result.map_or_else(|error| report_error(&error), |value| print_output(&value))
 }
 
 fn print_output(value: &serde_json::Value) -> ExitCode {
@@ -554,13 +615,13 @@ fn check_file(file: &str) -> ExitCode {
     let result = read_document(file).and_then(|document| match document {
         Document::State(program) => {
             let goal = program.goal;
-            let direct = native_space_language::core::interpret(&program)
+            let direct = native_space_language::retained::interpret(&program)
                 .map_err(|error| error.to_string())?;
             let bytecode = native_space_language::bytecode::compile(&program)
                 .map_err(|error| error.to_string())?;
-            let compiled = native_space_language::bytecode::execute(&bytecode)
+            let compiled = native_space_language::bytecode::execute_retained(&bytecode)
                 .map_err(|error| error.to_string())?;
-            if direct != compiled {
+            if !direct.same_structure(&compiled) || !direct.same_projection(&compiled) {
                 return Err("the evaluator and bytecode machine disagree".into());
             }
             match goal {
@@ -568,11 +629,14 @@ fn check_file(file: &str) -> ExitCode {
                     "Valid exact-state document: {}",
                     Path::new(file).display()
                 )),
-                native_space_language::core::Goal::ProveZero if direct.is_zero() => {
-                    Ok(format!("Valid zero proof: {}", Path::new(file).display()))
+                native_space_language::core::Goal::ProveZero if direct.project().is_zero() => {
+                    Ok(format!(
+                        "Valid classical-projection zero proof: {}",
+                        Path::new(file).display()
+                    ))
                 }
                 native_space_language::core::Goal::ProveZero => Err(format!(
-                    "zero proof failed: {} evaluates to a nonzero native state",
+                    "zero proof failed: {} has a nonzero classical projection",
                     Path::new(file).display()
                 )),
             }
@@ -671,10 +735,7 @@ mod tests {
         assert_eq!(
             run_derivation(
                 "axis_subtract",
-                &[
-                    "identity_orientation".to_owned(),
-                    "identity_orientation".to_owned(),
-                ],
+                &["identity_phase".to_owned(), "identity_phase".to_owned(),],
                 false,
                 None,
             ),

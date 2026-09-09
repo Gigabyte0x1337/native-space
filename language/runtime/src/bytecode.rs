@@ -3,15 +3,13 @@
 
 //! Version 1 stack bytecode and independent exact-state virtual machine.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::core::{
-    Expr, Goal, LanguageError, NativeScalar, NativeState, OutputKind, Program, Span,
-    expand_functions, is_canonical_orientation, optimize,
+    Goal, LanguageError, NativeState, OutputKind, Program, Span, is_canonical_phase,
 };
+use crate::retained::Operation;
 
 pub const BYTECODE_VERSION: u64 = 1;
 
@@ -25,8 +23,12 @@ pub enum Opcode {
     Store,
     Add,
     Multiply,
-    Orient,
+    Phase,
     Index,
+    /// Select indexed coordinates at evaluation time, retaining the source graph.
+    Camera,
+    /// Preserve scope inputs; this is a storage instruction, not an arithmetic primitive.
+    Retain,
     Halt,
 }
 
@@ -34,8 +36,17 @@ pub enum Opcode {
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum Operand {
     Integer(i64),
-    Index { direction: u64, depth: u64 },
-    Scalar { real: String, imag: String },
+    Index {
+        direction: u64,
+        depth: u64,
+    },
+    Scalar {
+        coordinates: crate::retained::ScalarData,
+    },
+    Camera {
+        from: u64,
+        to: u64,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -93,32 +104,75 @@ impl BytecodeProgram {
     }
 }
 
-/// Compile a valid exact-state document without evaluating it.
+/// Compile a native operation graph, preserving branches and camera read dependencies.
+///
+/// Source functions construct the graph; scalar arithmetic stays behind the
+/// classical camera. Staged discovery may observe values while constructing it;
+/// indexed reads remain deferred. The VM independently replays every record.
 ///
 /// # Errors
 ///
 /// Returns a name-analysis diagnostic or a slot-capacity error.
+///
+/// # Panics
+/// Panics only if an internal graph invariant is violated after validation.
 pub fn compile(program: &Program) -> Result<BytecodeProgram, LanguageError> {
-    // Reflection must observe the original source graph. Lower calls and trace
-    // strands before theorem-authorized rewrites optimize the executable form.
-    let expanded = expand_functions(program)?;
-    let program = optimize(&expanded)?.program;
+    let state = crate::retained::interpret(program)?;
     let mut compiler = Compiler::default();
-    for binding in &program.bindings {
-        compiler.expression(&binding.value);
+    for step in state.plan() {
         let slot = i64::try_from(compiler.slot_names.len()).map_err(|_capacity_error| {
             LanguageError(crate::core::Diagnostic {
                 code: "NSC001".into(),
                 message: "program has too many bindings".into(),
                 source_name: program.source_name.clone(),
-                span: binding.span,
+                span: step.span,
             })
         })?;
-        compiler.slots.insert(binding.name.clone(), slot);
-        compiler.slot_names.push(binding.name.clone());
-        compiler.emit(Opcode::Store, Some(Operand::Integer(slot)), binding.span);
+        for input in &step.inputs {
+            compiler.load(*input, step.span);
+        }
+        match step.operator {
+            Operation::Scalar { coordinates } => {
+                compiler.emit(
+                    Opcode::PushScalar,
+                    Some(Operand::Scalar { coordinates }),
+                    step.span,
+                );
+            }
+            Operation::Add => compiler.emit(Opcode::Add, Some(Operand::Integer(2)), step.span),
+            Operation::Multiply => {
+                compiler.emit(Opcode::Multiply, Some(Operand::Integer(2)), step.span);
+            }
+            Operation::Phase { turns } => {
+                compiler.emit(Opcode::Phase, Some(Operand::Integer(turns)), step.span);
+            }
+            Operation::Index { direction, depth } => compiler.emit(
+                Opcode::Index,
+                Some(Operand::Index { direction, depth }),
+                step.span,
+            ),
+            Operation::Camera { from, to } => compiler.emit(
+                Opcode::Camera,
+                Some(Operand::Camera { from, to }),
+                step.span,
+            ),
+        }
+        if !step.retained.is_empty() {
+            for input in &step.retained {
+                compiler.load(*input, step.span);
+            }
+            compiler.emit(
+                Opcode::Retain,
+                Some(Operand::Integer(
+                    i64::try_from(step.retained.len()).expect("allocated graph fits i64"),
+                )),
+                step.span,
+            );
+        }
+        compiler.slot_names.push(format!("branch_{slot}"));
+        compiler.emit(Opcode::Store, Some(Operand::Integer(slot)), step.span);
     }
-    compiler.expression(&program.result);
+    compiler.load(compiler.slot_names.len() - 1, program.result.span());
     compiler.emit(Opcode::Halt, None, program.result.span());
     Ok(BytecodeProgram {
         version: BYTECODE_VERSION,
@@ -132,7 +186,6 @@ pub fn compile(program: &Program) -> Result<BytecodeProgram, LanguageError> {
 
 #[derive(Debug, Default)]
 struct Compiler {
-    slots: BTreeMap<String, i64>,
     slot_names: Vec<String>,
     instructions: Vec<Instruction>,
 }
@@ -146,95 +199,43 @@ impl Compiler {
         });
     }
 
-    fn expression(&mut self, expression: &Expr) {
-        match expression {
-            Expr::Zero { span } => self.emit(Opcode::PushZero, None, *span),
-            Expr::One { span } => self.emit(Opcode::PushOne, None, *span),
-            Expr::Scalar { real, imag, span } => self.emit(
-                Opcode::PushScalar,
-                Some(Operand::Scalar {
-                    real: real.clone(),
-                    imag: imag.clone(),
-                }),
-                *span,
-            ),
-            Expr::Reference { name, span } => self.emit(
-                Opcode::Load,
-                Some(Operand::Integer(self.slots[name])),
-                *span,
-            ),
-            Expr::Spread { .. } | Expr::Concat { .. } | Expr::Fold { .. } | Expr::Camera { .. } => {
-                unreachable!(
-                    "packs, concat, fold, and camera are lowered before bytecode generation"
-                )
-            }
-            Expr::Call { .. } => unreachable!("calls are erased before bytecode generation"),
-            Expr::Reflect { .. } | Expr::Trace { .. } => {
-                unreachable!("trace is lowered before bytecode generation")
-            }
-            Expr::Length { .. } => {
-                unreachable!("length is lowered before bytecode generation")
-            }
-            Expr::Untrace { .. } => {
-                unreachable!("untrace is lowered before bytecode generation")
-            }
-            Expr::RankDescent { .. } => {
-                unreachable!("rank descent is lowered before bytecode generation")
-            }
-            Expr::Apply { .. } => {
-                unreachable!("pattern application is lowered before bytecode generation")
-            }
-            Expr::Add { operands, span } | Expr::Multiply { operands, span } => {
-                for operand in operands {
-                    self.expression(operand);
-                }
-                let opcode = if matches!(expression, Expr::Add { .. }) {
-                    Opcode::Add
-                } else {
-                    Opcode::Multiply
-                };
-                self.emit(
-                    opcode,
-                    Some(Operand::Integer(
-                        i64::try_from(operands.len()).expect("operand count fits i64"),
-                    )),
-                    *span,
-                );
-            }
-            Expr::Orient { turns, value, span } => {
-                self.expression(value);
-                self.emit(Opcode::Orient, Some(Operand::Integer(*turns)), *span);
-            }
-            Expr::Index {
-                direction,
-                multiplicity,
-                value,
-                span,
-            } => {
-                self.expression(value);
-                self.emit(
-                    Opcode::Index,
-                    Some(Operand::Index {
-                        direction: *direction,
-                        depth: *multiplicity,
-                    }),
-                    *span,
-                );
-            }
-        }
+    fn load(&mut self, slot: usize, span: Option<Span>) {
+        self.emit(
+            Opcode::Load,
+            Some(Operand::Integer(
+                i64::try_from(slot).expect("allocated slot fits i64"),
+            )),
+            span,
+        );
     }
 }
 
-/// Execute schema-1 bytecode in the independent exact-state VM.
+/// Execute bytecode and explicitly return its classical projection.
+///
+/// Use `execute_retained` when feeding the full native result into another step.
 ///
 /// # Errors
 ///
 /// Returns a located VM diagnostic for malformed or invalid bytecode.
+pub fn execute(program: &BytecodeProgram) -> Result<NativeState, LanguageError> {
+    execute_retained(program).map(|state| state.project().clone())
+}
+
+/// Execute bytecode while retaining every primitive's input relationships.
+///
+/// # Errors
+/// Returns a located VM diagnostic for malformed or invalid bytecode.
+///
+/// # Panics
+/// Panics only if an internal stack invariant is violated after validation.
 #[expect(
     clippy::too_many_lines,
     reason = "one exhaustive opcode match keeps VM behavior closed and auditable"
 )]
-pub fn execute(program: &BytecodeProgram) -> Result<NativeState, LanguageError> {
+pub fn execute_retained(
+    program: &BytecodeProgram,
+) -> Result<crate::retained::State, LanguageError> {
+    use crate::retained::State;
     if program.version != BYTECODE_VERSION {
         return Err(vm_error(
             "NSV011",
@@ -247,10 +248,11 @@ pub fn execute(program: &BytecodeProgram) -> Result<NativeState, LanguageError> 
     let mut slots = vec![None; program.slot_names.len()];
     for instruction in &program.instructions {
         match instruction.opcode {
-            Opcode::PushZero => stack.push(NativeState::zero()),
-            Opcode::PushOne => stack.push(NativeState::one()),
+            Opcode::PushZero => stack.push(State::zero()),
+            Opcode::PushOne => stack.push(State::one()),
             Opcode::PushScalar => {
-                let Operand::Scalar { real, imag } = required_operand(instruction, program)? else {
+                let Operand::Scalar { coordinates } = required_operand(instruction, program)?
+                else {
                     return Err(vm_error(
                         "NSV009",
                         "instruction requires scalar operand",
@@ -258,9 +260,9 @@ pub fn execute(program: &BytecodeProgram) -> Result<NativeState, LanguageError> 
                         instruction.span,
                     ));
                 };
-                let value = NativeScalar::from_text(real, imag)
+                let value = crate::retained::Scalar::from_data(coordinates)
                     .map_err(|message| vm_error("NSV009", &message, program, instruction.span))?;
-                stack.push(NativeState::scalar(value));
+                stack.push(State::native_scalar(&value));
             }
             Opcode::Load => {
                 let slot = required_slot(instruction, program, slots.len())?;
@@ -304,12 +306,8 @@ pub fn execute(program: &BytecodeProgram) -> Result<NativeState, LanguageError> 
                         instruction.span,
                     ));
                 }
-                let values = stack.split_off(stack.len() - arity);
-                let mut result = if instruction.opcode == Opcode::Add {
-                    NativeState::zero()
-                } else {
-                    NativeState::one()
-                };
+                let mut values = stack.split_off(stack.len() - arity).into_iter();
+                let mut result = values.next().expect("validated nonempty arity");
                 for value in values {
                     result = if instruction.opcode == Opcode::Add {
                         result.add(&value)
@@ -319,7 +317,36 @@ pub fn execute(program: &BytecodeProgram) -> Result<NativeState, LanguageError> 
                 }
                 stack.push(result);
             }
-            Opcode::Orient => {
+            Opcode::Retain => {
+                let Operand::Integer(count) = required_operand(instruction, program)? else {
+                    return Err(vm_error(
+                        "NSV008",
+                        "RETAIN requires an input count",
+                        program,
+                        instruction.span,
+                    ));
+                };
+                let count = usize::try_from(*count).map_err(|_capacity_error| {
+                    vm_error(
+                        "NSV003",
+                        "invalid retained input count",
+                        program,
+                        instruction.span,
+                    )
+                })?;
+                if count == 0 || count >= stack.len() {
+                    return Err(vm_error(
+                        "NSV001",
+                        "RETAIN requires a result and its inputs",
+                        program,
+                        instruction.span,
+                    ));
+                }
+                let inputs = stack.split_off(stack.len() - count);
+                let value = stack.pop().expect("validated result below retained inputs");
+                stack.push(value.retaining(&inputs));
+            }
+            Opcode::Phase => {
                 let Operand::Integer(turns) = required_operand(instruction, program)? else {
                     return Err(vm_error(
                         "NSV008",
@@ -328,10 +355,10 @@ pub fn execute(program: &BytecodeProgram) -> Result<NativeState, LanguageError> 
                         instruction.span,
                     ));
                 };
-                if !is_canonical_orientation(*turns) {
+                if !is_canonical_phase(*turns) {
                     return Err(vm_error(
                         "NSV012",
-                        "orient turns must be an integer from 0 through 3; retain repeated counts with INDEX",
+                        "phase turns must be an integer from 0 through 3; retain repeated counts with INDEX",
                         program,
                         instruction.span,
                     ));
@@ -344,7 +371,7 @@ pub fn execute(program: &BytecodeProgram) -> Result<NativeState, LanguageError> 
                         instruction.span,
                     )
                 })?;
-                stack.push(value.orient(*turns));
+                stack.push(value.phase(*turns));
             }
             Opcode::Index => {
                 let Operand::Index { direction, depth } = required_operand(instruction, program)?
@@ -370,6 +397,25 @@ pub fn execute(program: &BytecodeProgram) -> Result<NativeState, LanguageError> 
                     })?,
                 );
             }
+            Opcode::Camera => {
+                let Operand::Camera { from, to } = required_operand(instruction, program)? else {
+                    return Err(vm_error(
+                        "NSV010",
+                        "CAMERA requires source and destination directions",
+                        program,
+                        instruction.span,
+                    ));
+                };
+                let value = stack.pop().ok_or_else(|| {
+                    vm_error(
+                        "NSV001",
+                        "bytecode stack underflow",
+                        program,
+                        instruction.span,
+                    )
+                })?;
+                stack.push(value.camera(*from, *to));
+            }
             Opcode::Halt => {
                 if stack.len() != 1 {
                     return Err(vm_error(
@@ -388,6 +434,12 @@ pub fn execute(program: &BytecodeProgram) -> Result<NativeState, LanguageError> 
                     )
                 });
             }
+        }
+        // Replaying a node must preserve the primitive's location, not just the
+        // final output location. Rounded execution reports failures from this graph.
+        if !matches!(instruction.opcode, Opcode::Load | Opcode::Store) {
+            let value = stack.pop().expect("node instruction produced a state");
+            stack.push(value.at_span(instruction.span));
         }
     }
     Err(vm_error(
@@ -457,7 +509,7 @@ mod tests {
     use crate::core::{interpret, parse};
     #[test]
     fn vm_is_independent_and_round_trips() {
-        let source = "let x = index(2, scalar(3/2, 0))\noutput add(x, orient(2, x))";
+        let source = "let x = index(2, scalar(3/2, 0))\noutput add(x, phase(2, x))";
         let ast = parse(source, "vm.ns").unwrap();
         let bytecode = compile(&ast).unwrap();
         assert_eq!(execute(&bytecode).unwrap(), interpret(&ast).unwrap());
@@ -468,14 +520,14 @@ mod tests {
     }
 
     #[test]
-    fn vm_rejects_noncanonical_orientation_bytecode() {
-        let ast = parse("output orient(1, one)", "invalid-orient-bytecode.ns").unwrap();
+    fn vm_rejects_noncanonical_phase_bytecode() {
+        let ast = parse("output phase(1, one)", "invalid-phase-bytecode.ns").unwrap();
         let mut bytecode = compile(&ast).unwrap();
         let instruction = bytecode
             .instructions
             .iter_mut()
-            .find(|instruction| instruction.opcode == Opcode::Orient)
-            .expect("compiled source contains one orientation instruction");
+            .find(|instruction| instruction.opcode == Opcode::Phase)
+            .expect("compiled source contains one phase instruction");
         instruction.operand = Some(Operand::Integer(4));
 
         let error = execute(&bytecode).unwrap_err();

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Definition order is precedence: MULTIPLY binds before subtraction.
 
-let subtract = (left, right) => add(left, orient(2, right))
+let subtract = (left, right) => add(left, phase(2, right))
 
 operator "*" = (left, right) => multiply(left, right)
 operator "-" = (left, right) => subtract(left, right)

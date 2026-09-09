@@ -3,7 +3,7 @@
 
 //! Derives Native Space functions into explicit primitive operations.
 //!
-//! The crate keeps the language kernel fixed at `ADD`, `MULTIPLY`, `ORIENT`,
+//! The crate keeps the language kernel fixed at `ADD`, `MULTIPLY`, `PHASE`,
 //! and `INDEX`. Named functions are recursively erased until an active function
 //! is referenced again. That reference closes a finite self-modeling pattern
 //! graph instead of creating an error or materializing unbounded output. Every

@@ -4,4 +4,4 @@ let angle = index(2, scalar(-1, 1))
 let contact = index(3, scalar(1/2, -3/2))
 let forward = add(bond, angle, contact)
 let reverse = add(contact, angle, bond)
-add(forward, orient(2, reverse)) = 0
+add(forward, phase(2, reverse)) = 0

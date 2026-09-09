@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Try-out: a four-step phase cycle over exact complex states.
+
+let observations = () =>
+add(
+  index(1, 1),
+  index(2, phase(1, 1)),
+  index(3, phase(2, 1)),
+  index(4, phase(3, 1)),
+  index(5, 1),
+  index(6, phase(1, 1)),
+  index(7, phase(2, 1)),
+  index(8, phase(3, 1)),
+  index(9, 1),
+  index(10, phase(1, 1)),
+  index(11, phase(2, 1)),
+  index(12, phase(3, 1))
+)
+
+output observations() as pattern

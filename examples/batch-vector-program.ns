@@ -2,6 +2,6 @@
 # Shift x by +1 and y by -1; a z coordinate passes through unchanged.
 
 let step = (point) =>
-add(point, index(1, 1), index(1, index(1, orient(2, 1))))
+add(point, index(1, 1), index(1, index(1, phase(2, 1))))
 
 output 0

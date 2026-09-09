@@ -38,7 +38,7 @@ function graph. Recursive calls remain finite graph edges.
 Zero-valued metadata fields disappear under ordinary native ADD. The decoder
 therefore reconstructs zero only where the trace schema defines it as the
 unique absent default, such as the first parameter position, a non-variadic
-flag, a zero orientation, or camera destination zero.
+flag, a zero phase, or camera destination zero.
 
 ## Accepted tradeoff
 
