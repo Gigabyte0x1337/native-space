@@ -392,14 +392,14 @@ carry(next)
     fn imported_steps_keep_their_original_file() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
-            .join("examples/math-functions.ns");
+            .join("language/runtime/tests/fixtures/import-root.ns");
         let library = crate::derivation::load(path).unwrap();
-        let report = derive_from_library(&library, "centered_re_perspective", &[]).unwrap();
+        let report = derive_from_library(&library, "local_pattern", &[]).unwrap();
         assert!(report.primitive_steps.iter().any(|step| {
             step.source
                 .file
                 .replace('\\', "/")
-                .ends_with("examples/math-functions.ns")
+                .ends_with("language/runtime/tests/fixtures/import-root.ns")
         }));
         assert!(report.primitive_steps.iter().any(|step| {
             step.source

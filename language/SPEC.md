@@ -436,9 +436,8 @@ resolve imports from their input file. `derive --source FILE FUNCTION` expands
 the merged library and preserves the original file location of every step.
 
 [functions.ns](functions.ns) contains only generic source functions.
-Mathematical functions such as the prime-counting camera `pi` (meaning
-$\pi(n)$, not the circle constant) and the zeta cameras belong in
-`../examples/`. Functions use the same `let`/arrow shape:
+Domain-specific functions belong in user source modules, not the runtime.
+Functions use the same `let`/arrow shape:
 
 ```ns
 let axis_subtract = (left, right) =>
@@ -477,7 +476,8 @@ PHASE(1)
 quarter_turn_pattern()
 ```
 
-`derive --source examples/recursive-pattern.ns quarter_turn_pattern` therefore
+Saving that source as `pattern.ns` and running
+`derive --source pattern.ns quarter_turn_pattern` therefore
 reports one finite source operation and one self-reference. Direct, mutual,
 empty, and argument-carrying self-references use the same graph rule.
 `primitive_steps` is the operation listing for one finite graph traversal in
@@ -552,9 +552,8 @@ documented below.
 
 The host does not chunk, independently map, or reset the data. `fold` provides
 the explicit source-defined state chain when observations must share one model
-state. [`../examples/data-frequency-model.ns`](../examples/data-frequency-model.ns)
-is a complete zero proof and data-run example: the source defines field layout,
-ordered pair coordinates, accumulation, and the resulting transition counts.
+state. The source defines field layout, indexed coordinates, accumulation,
+and output interpretation.
 
 ## Batch execution host
 
@@ -709,8 +708,7 @@ All commands use the same Native Space 1.0 parser:
 | `native-space mcp` | Standard input/output | Serve operation derivation; the tool accepts an optional working-directory-confined relative `.ns` source path |
 
 The no-`--source` derive form intentionally sees only the bundled generic
-library. Mathematical functions in `examples/math-functions.ns` always require
-the explicit `--source` argument.
+library. Functions in user libraries require the explicit `--source` argument.
 
 Version 1.0 has no hidden analytic evaluator, privileged zeta/RH function,
 specialized claim type, loop, mutation, floating-point value, materialized

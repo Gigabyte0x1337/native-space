@@ -136,8 +136,8 @@ inputs and continuous fractional-phase evaluation need a larger exact carrier
 and are not implemented by this storage choice.
 
 `phase(0..3, value)` uses quarter-turn steps, with no old-name alias.
-Fractions used by source movement patterns describe full-cycle coordinates;
-they are not silently reinterpreted as primitive quarter-turn counts.
+User-defined fractional phase coordinates are not silently reinterpreted as
+primitive quarter-turn counts.
 
 `run --numeric f64` explicitly rounds each scalar arithmetic step of the
 elaborated graph. INDEX and graph storage remain exact. An indexed camera stays

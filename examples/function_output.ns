@@ -1,4 +1,0 @@
-# Functions are ordinary values. Re has no privileged implementation.
-let Re = (x) => x
-
-output Re(1)

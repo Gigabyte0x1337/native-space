@@ -64,11 +64,12 @@ the artifact records the camera, requested bound, observed error, retained
 modes, and successful verification. Native equality and continuation beyond the
 finite window remain unclaimed.
 
-## Runnable experiment
+## Running on your own data
 
-```powershell
-cargo run --manifest-path language/runtime/Cargo.toml --bin native-space -- frequency examples/frequency-observations.ns --samples 16 --maximum-error 1e-12
+For an exact indexed state saved as `observations.ns`:
+
+```sh
+native-space frequency observations.ns --samples 16 --maximum-error 1e-12
 ```
 
-The example is one exact quarter-turn mode sampled sixteen times. The current
-runtime retains one mode at bin 4 and verifies all sixteen classical outputs.
+The retained modes and measured replay error depend on the supplied data.

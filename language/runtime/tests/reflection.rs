@@ -227,29 +227,7 @@ output untrace(trace(meta))"
         .is_zero()
     );
 }
-#[test]
-fn matrix_rewrite_matches_numeric_and_symbolic_products() {
-    let example = include_str!("../../../examples/reflection-matrix.ns");
-    let output = "output apply(improved, a, b, x) as pattern";
-    assert_eq!(
-        run(example),
-        run("output index(40, add(index(10, 20), index(11, 24), index(12, 32), index(13, 36)))")
-    );
-    let symbolic = example.replace(
-        output,
-        r"
-let sa = matrix(index(101, one), index(102, one), index(103, one), index(104, one))
-let sb = matrix(index(111, one), index(112, one), index(113, one), index(114, one))
-let sx = matrix(index(121, one), index(122, one), index(123, one), index(124, one))
-output add(apply(improved, sa, sb, sx), phase(2, apply(original, sa, sb, sx)))",
-    );
-    assert!(run(&symbolic).is_zero());
-    let length = example.replace(
-        output,
-        "output add(length(original), phase(2, index(1, index(1, length(improved)))))",
-    );
-    assert!(run(&length).is_zero());
-}
+
 #[test]
 fn compiled_application_contains_transformed_operations_not_just_an_answer() {
     let program = core::parse(

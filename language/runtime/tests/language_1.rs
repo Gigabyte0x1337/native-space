@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Rust guideline compliant 2026-02-21
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use native_space_language::{Document, compile, expand_source, load_document, parse_document};
@@ -13,46 +12,9 @@ fn repository() -> PathBuf {
         .unwrap()
 }
 
-fn document(name: &str) -> Document {
-    let path = repository().join("examples").join(name);
-    load_document(&path).unwrap()
-}
-
-#[test]
-fn every_example_is_source_or_valid_host_data() {
-    fn check(directory: &Path) {
-        for entry in fs::read_dir(directory).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                check(&path);
-                continue;
-            }
-            match path.extension().and_then(|value| value.to_str()) {
-                Some("ns") => {
-                    load_document(&path)
-                        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-                }
-                Some("json") => {
-                    native_space_language::batch::read_data(&path)
-                        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-                }
-                Some("csv") => {
-                    native_space_language::continuation::read_observations_csv(&path)
-                        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-                }
-                extension => panic!(
-                    "unexpected example format {extension:?}: {}",
-                    path.display()
-                ),
-            }
-        }
-    }
-    check(&repository().join("examples"));
-}
-
 #[test]
 fn relative_imports_load_the_canonical_function_library() {
-    let path = repository().join("examples/math-functions.ns");
+    let path = repository().join("language/runtime/tests/fixtures/import-root.ns");
     let Document::Functions(library) = load_document(&path).unwrap() else {
         panic!("proof import must resolve to a function library");
     };
@@ -61,13 +23,13 @@ fn relative_imports_load_the_canonical_function_library() {
         library
             .functions
             .iter()
-            .any(|function| function.name == "centered_re_perspective")
+            .any(|function| function.name == "local_pattern")
     );
     assert!(
         library
             .functions
             .iter()
-            .any(|function| function.name == "zeta_classical_pattern")
+            .any(|function| function.name == "identity_phase")
     );
 }
 
@@ -110,84 +72,13 @@ fn complete_function_libraries_are_validated_before_check_or_compile() {
 }
 
 #[test]
-fn application_witnesses_are_exact_zero_proofs() {
-    for name in [
-        "matrix-distributivity.ns",
-        "dynamics-phase-equivariance.ns",
-        "nbody-perspective-zero.ns",
-        "navier-stokes-index-composition.ns",
-        "molecular-interaction-order.ns",
-        "programming-language-data.ns",
-    ] {
-        let path = repository().join("examples/applications").join(name);
-        let source = fs::read_to_string(&path).unwrap();
-        let Document::State(program) = parse_document(&source, path.to_str().unwrap()).unwrap()
-        else {
-            panic!("{name} must be an exact state proof");
-        };
-        assert_eq!(program.goal, native_space_language::core::Goal::ProveZero);
-        let direct = native_space_language::core::interpret(&program).unwrap();
-        let bytecode = native_space_language::bytecode::compile(&program).unwrap();
-        assert!(direct.is_zero(), "{name}");
-        assert_eq!(
-            native_space_language::bytecode::execute(&bytecode).unwrap(),
-            direct,
-            "{name}"
-        );
-        assert_eq!(bytecode.goal, program.goal);
-        assert_eq!(bytecode.output_kind, program.output_kind);
-    }
-}
-
-#[test]
-fn projection_counterexample_proves_both_exact_residuals() {
-    let Document::State(program) = document("projection-zero-fiber-counterexample.ns") else {
-        panic!("counterexample must be an exact state proof");
-    };
-    assert_eq!(program.goal, native_space_language::core::Goal::ProveZero);
-    assert!(
-        native_space_language::core::interpret(&program)
-            .unwrap()
-            .is_zero()
-    );
-}
-
-#[test]
-fn finite_examples_agree_between_evaluator_and_vm() {
-    for name in [
-        "basic.ns",
-        "classic_identities.ns",
-        "data-frequency-model.ns",
-        "operators.ns",
-        "phase_zero.ns",
-        "primes.ns",
-        "program-length.ns",
-        "rank-descent-apply.ns",
-        "rank-descent.ns",
-        "trace.ns",
-        "untrace-relationships.ns",
-        "untrace.ns",
-        "utf8.ns",
-        "variadic-concat.ns",
-    ] {
-        let Document::State(program) = document(name) else {
-            panic!("{name} must be a state document");
-        };
-        let direct = native_space_language::core::interpret(&program).unwrap();
-        let bytecode = native_space_language::bytecode::compile(&program).unwrap();
-        assert_eq!(
-            native_space_language::bytecode::execute(&bytecode).unwrap(),
-            direct,
-            "{name}"
-        );
-        assert_eq!(bytecode.version, 1);
-        assert_eq!(bytecode.output_kind, program.output_kind);
-    }
-}
-
-#[test]
 fn variadic_concat_expansion_is_visible_pure_source() {
-    let document = document("variadic-concat.ns");
+    let document = parse_document(
+        "let parameters = (values...) => concat(9, values...)\n\
+         add(parameters(2, 3), phase(2, add(index(9, 2), index(9, index(9, 3))))) = 0",
+        "variadic.ns",
+    )
+    .unwrap();
     let expanded = expand_source(&document).unwrap();
 
     assert!(!expanded.contains("concat"));
@@ -196,24 +87,6 @@ fn variadic_concat_expansion_is_visible_pure_source() {
     assert!(expanded.contains("index(9"));
     let Document::State(program) = parse_document(&expanded, "expanded.ns").unwrap() else {
         panic!("expanded source must remain an exact-state document");
-    };
-    assert!(
-        native_space_language::core::interpret(&program)
-            .unwrap()
-            .is_zero()
-    );
-}
-
-#[test]
-fn data_model_expands_to_core_operations_and_proves_its_reference_result() {
-    let document = document("data-frequency-model.ns");
-    let expanded = expand_source(&document).unwrap();
-
-    assert!(!expanded.contains("fold("));
-    assert!(!expanded.contains("camera("));
-    let Document::State(program) = parse_document(&expanded, "expanded-data-model.ns").unwrap()
-    else {
-        panic!("expanded data model must remain an exact-state document");
     };
     assert!(
         native_space_language::core::interpret(&program)
@@ -334,7 +207,13 @@ output add(
 
 #[test]
 fn operator_definition_order_sets_precedence() {
-    let Document::State(program) = document("operators.ns") else {
+    let Document::State(program) = parse_document(
+        "operator \"*\" = (left, right) => multiply(left, right)\n\
+         operator \"-\" = (left, right) => add(left, phase(2, right))\n\
+         output 10 - 2 * 3",
+        "operators.ns",
+    )
+    .unwrap() else {
         panic!("operator example must be an exact state document");
     };
     let result = native_space_language::core::interpret(&program).unwrap();
@@ -390,18 +269,8 @@ fn parameters_cannot_collide_with_language_names() {
 }
 
 #[test]
-fn mathematical_function_examples_are_source_defined() {
-    for name in ["zeta.ns", "dual_alignment.ns", "re_critical_line.ns"] {
-        let Document::Functions(library) = document(name) else {
-            panic!("{name} must contain source-defined functions")
-        };
-        assert!(!library.functions.is_empty(), "{name}");
-    }
-}
-
-#[test]
 fn boolean_example_is_recomputed_exhaustively() {
-    let Document::Logic(program) = document("boolean_logic.ns") else {
+    let Document::Logic(program) = parse_document("parameter a: bool\nparameter b: bool\nprove iff(not(and(a, b)), or(not(a), not(b))) by truth_table", "logic.ns").unwrap() else {
         panic!()
     };
     let report = native_space_language::logic::verify(
@@ -413,9 +282,14 @@ fn boolean_example_is_recomputed_exhaustively() {
 
 #[test]
 fn every_compiled_artifact_starts_at_schema_version_one() {
-    for name in ["basic.ns", "zeta.ns", "boolean_logic.ns"] {
-        let artifact = compile(&document(name)).unwrap();
-        assert_eq!(artifact["version"], 1, "{name}");
+    for source in [
+        "output add(1, 2)",
+        "let identity = () =>\nPHASE(0)",
+        "parameter a: bool\nparameter b: bool\nprove iff(not(and(a, b)), or(not(a), not(b))) by truth_table",
+    ] {
+        let document = parse_document(source, "schema.ns").unwrap();
+        let artifact = compile(&document).unwrap();
+        assert_eq!(artifact["version"], 1, "{source}");
     }
 }
 

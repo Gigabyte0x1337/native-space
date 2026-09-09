@@ -1,7 +1,0 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# trace returns the complete source-function graph as a nested native strand.
-
-let quarter_step = (value) =>
-add(index(7, value), phase(1, value))
-
-output trace(quarter_step) as pattern

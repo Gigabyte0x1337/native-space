@@ -50,15 +50,17 @@ output z as vector
 The exact vector is `[ln(25)/2, 3/5, 4/5]`, serialized as exact expressions.
 It is not converted to decimals unless requested.
 
+Save the source above as `program.ns`, then run:
+
 ```sh
-native-space run examples/depth-phase-index.ns
-native-space run examples/depth-phase-index.ns --numeric f64
-native-space view examples/depth-phase-index.ns --index-direction 7
-native-space view examples/depth-phase-index.ns --index-direction 7 --numeric f64
+native-space run program.ns
+native-space run program.ns --numeric f64
+native-space view program.ns --index-direction 7
+native-space view program.ns --index-direction 7 --numeric f64
 ```
 
-That example squares `3+4i` and displays the result. Use `as number` for a
-real classical result, or bare output / `as pattern` for the retained state.
+Use `as number` for a real classical result, or bare output / `as pattern`
+for the retained state.
 The branch view includes exact INDEX labels and source connections.
 
 Exact execution is the default. In f64 mode each arithmetic step rounds;

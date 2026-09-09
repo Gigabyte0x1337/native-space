@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Exercises imported and local operation locations without domain-specific claims.
+import "../../../functions.ns"
+
+let local_pattern = () =>
+identity_phase()
+ADD()

@@ -167,19 +167,19 @@ mod tests {
     }
 
     #[test]
-    fn mcp_tool_loads_a_scoped_mathematical_library() {
+    fn mcp_tool_loads_a_scoped_source_library() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let report = derive_report(
             &root,
             &DeriveOperationsParameters {
-                function: "zeta_classical_pattern".to_owned(),
+                function: "local_pattern".to_owned(),
                 arguments: Vec::new(),
-                source: Some("examples/math-functions.ns".to_owned()),
+                source: Some("language/runtime/tests/fixtures/import-root.ns".to_owned()),
             },
         )
-        .expect("repository example must derive");
+        .expect("scoped source must derive");
 
-        assert_eq!(report.function, "zeta_classical_pattern");
+        assert_eq!(report.function, "local_pattern");
         assert!(!report.primitive_steps.is_empty());
         assert!(
             report
@@ -207,16 +207,16 @@ mod tests {
 
     #[test]
     fn scoped_loading_rejects_imports_outside_the_source_root() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
         let error = derive_report(
             &root,
             &DeriveOperationsParameters {
-                function: "zeta_classical_pattern".to_owned(),
+                function: "local_pattern".to_owned(),
                 arguments: Vec::new(),
-                source: Some("math-functions.ns".to_owned()),
+                source: Some("import-root.ns".to_owned()),
             },
         )
-        .expect_err("the import of ../language/functions.ns must leave this narrow root");
+        .expect_err("the generic library import must leave the fixtures root");
 
         assert!(error.message.contains("configured source root"));
     }

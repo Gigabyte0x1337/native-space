@@ -1,9 +1,0 @@
-# The input remains a native state even when its classical answer is zero.
-# Run: native-space run examples/camera-feedback.ns
-# View its branches: native-space view examples/camera-feedback.ns --turns 1
-# Save run output as state.json, then feed that state into step:
-# native-space batch examples/camera-feedback.ns --function step --data state.json --steps 2
-# Each step adds one. The classical answers are 0, then 1, then 2.
-# The original 7 and its cancelled multiplication remain in the full state.
-let step = (previous) => add(previous, 1)
-output multiply(7, 0)

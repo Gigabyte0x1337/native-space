@@ -1,6 +1,0 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Two indexed, phased terms combined into one finite native state.
-
-let x = index(1, scalar(2, 0))
-let y = phase(1, index(2, scalar(3, 0)))
-output add(x, y)

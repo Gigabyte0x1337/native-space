@@ -29,7 +29,7 @@ Cancellation operands remain in the graph even when the resulting phase is
 undefined.
 
 `phase(0..3, value)` names quarter-turn steps. There is no `orient` alias.
-The spelling changed across source, reflection, bytecode, and examples.
+The spelling is shared by source, reflection, and bytecode.
 General frame transformations remain separate from cyclic phase.
 
 ## Evaluation and cameras
@@ -78,20 +78,13 @@ Batch remains exact on CPU. The optional [GPU](GPU.md) remains the documented
 signed-32-bit classical backend, with host-retained state. The new f64 option
 does not select GPU execution or provide a GPU-resident native graph.
 
-## Examples and verification
+## Verification
 
-[depth-phase-index.ns](../examples/depth-phase-index.ns) demonstrates the default
-model. [movement-patterns.ns](../examples/movement-patterns.ns) is a separate,
-explicit base-two movement chart with full-cycle rational turns. Its root
-example halves supplied coordinates; it is not a general irrational scalar
-evaluator. [common-operations.ns](../examples/common-operations.ns) and
-[operation-patterns.ns](../examples/operation-patterns.ns) retain source-defined
-reference algorithms and their stated domains.
-
-The older executable corpus is kept for import and regression coverage, not
-as evidence for broader claims in historical names. Standalone applications
-and narrative proof collections remain outside this foundation. Application
-Rust examples still in the Cargo package need a separate package cleanup.
+The standalone NS example collection was removed to keep the foundation small.
+Git history preserves it. Example-specific tests were removed with that code;
+core runtime tests use focused inline sources and import fixtures instead.
+Fixtures test language behavior, not historical mathematical claims.
+The separate Rust application demos remain in the Cargo package.
 
 Tests cover exact coordinate/serialization round trips, complex operations,
 phase landmarks and wrapping, multi-channel Fourier readouts, derived cameras,

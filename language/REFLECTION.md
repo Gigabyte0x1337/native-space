@@ -52,23 +52,12 @@ The tradeoff is a smaller auditable interface with rules written as ordinary
 functions. Native numeric state semantics, ordered graph dependencies, source
 locations, and strict malformed-graph diagnostics remain authoritative.
 
-## Verification obligations
+## Verification
 
-The full [matrix program](../examples/reflection-matrix.ns) calls
-`apply(improved, a, b, x)` after source-defined rewriting. The
-[zero proof](../examples/reflection-matrix-proof.ns) compares symbolic matrix
-entries and checks the shorter graph. Run them with:
-
-```powershell
-cargo run --manifest-path language/runtime/Cargo.toml -- run examples/reflection-matrix.ns
-cargo run --manifest-path language/runtime/Cargo.toml -- check examples/reflection-matrix-proof.ns
-```
-
-For the supplied numerical matrices, the rewritten program returns
-`[[20, 24], [32, 36]]`. Two shared-input 2 x 2 products become one:
-16 scalar multiplications become 8. These are formula counts, not runtime
-speedup measurements. The graph loses two source instruction coordinates;
-that is not the same metric as expanded scalar arithmetic.
+Runtime tests cover structural rewriting, graph application, round trips,
+and rejection of invalid or recursive executable graphs. The standalone
+matrix demonstration has been removed; those tests do not claim a measured
+matrix-multiplication speedup.
 
 ## Source round-trip requirements
 

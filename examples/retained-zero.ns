@@ -1,7 +1,0 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# The visible answer is 1, but x and its cancelled multiplication survive.
-# Bare output and 'as pattern' expose the retained state.
-# Change the final output to 'as number' to observe only the classical answer.
-let x = 7
-let cancelled = multiply(x, 0)
-output add(cancelled, 1)
