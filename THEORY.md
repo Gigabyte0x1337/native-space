@@ -35,6 +35,20 @@ retain the recipe, including original zero provenance. Replay costs k calls;
 large k can be represented even when replay exceeds a requested budget.
 No new NS primitive or source keyword is introduced.
 
+The finite-generator invariant holds at every successor: `(P,k)` becomes
+`(P,k+1)` with the identical shared seed/step graph. Only the arbitrary-precision
+index changes. By induction, selecting any finite number of successors never
+unrolls the generator. The index itself needs more digits as it grows; this is
+not constant-size storage for an unbounded integer.
+
+For the cyclic step `phase(1,x)` and seed `1`, the classical values repeat
+`1, i, -1, -i`, while the indexed observations remain distinct. This recurrence
+defines continued observations without a final index. Finite regression tests
+check repeated cycles and indices beyond machine-integer limits; they do not
+claim an infinite machine run. Evaluation remains resource-bounded, and an
+arbitrary transition need not terminate. Retained evaluation history is distinct
+from expansion of the compiled generator and is not silently discarded.
+
 ## The derived cylindrical camera
 
 For one nonzero complex sample `z`, phase `phi`, and nonnegative integer

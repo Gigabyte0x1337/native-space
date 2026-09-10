@@ -7,6 +7,61 @@ use native_space_language::{
 };
 use num_bigint::BigUint;
 
+#[test]
+fn cyclic_playback_advances_observations_without_expanding_the_compiled_generator() {
+    let p = generator("let step = (x) => phase(1,x)\noutput 1");
+    let original = p.observe(0_u32.into()).to_data().unwrap();
+    let mut cursor = p.cursor();
+    let mut selected = cursor.observation();
+    // Many complete cycles, with an independent exact four-phase oracle.
+    for k in 0_u32..=256 {
+        let (real, imag) = match k % 4 {
+            0 => ("1", "0"),
+            1 => ("0", "1"),
+            2 => ("-1", "0"),
+            _ => ("0", "-1"),
+        };
+        let expected = NativeState::scalar(NativeScalar::from_text(real, imag).unwrap());
+        assert_eq!(
+            cursor.seek(selected.index(), 256).unwrap().project(),
+            &expected
+        );
+        let reached = cursor.observation();
+        assert!(reached.same_selection(&selected));
+        assert_eq!(reached.index(), &BigUint::from(k));
+        assert!(reached.pattern().step().shares_graph(p.step()));
+        let successor = reached.successor();
+        assert!(!successor.same_selection(&reached));
+        assert!(successor.pattern().shares_generator(&p));
+        selected = successor;
+    }
+    let final_data = cursor.observation().to_data().unwrap();
+    assert_eq!(final_data["seed"], original["seed"]);
+    assert_eq!(final_data["step"], original["step"]);
+    assert_eq!(final_data["index"], "256");
+    let reached = cursor.observation();
+    cursor.seek(selected.index(), 256).unwrap_err();
+    assert!(cursor.observation().same_selection(&reached));
+}
+
+#[test]
+fn successor_crosses_machine_integer_limits_without_wrapping_or_materializing_steps() {
+    let p = generator("let step = (x) => phase(1,x)\noutput 1");
+    let original = p.observe(0_u32.into()).to_data().unwrap();
+    for k in [BigUint::from(u64::MAX), BigUint::from(2_u32).pow(256)] {
+        let a = p.observe(k.clone());
+        let b = a.successor();
+        assert_eq!(b.index(), &(k + 1_u32));
+        assert!(!a.same_selection(&b));
+        assert!(a.pattern().shares_generator(b.pattern()));
+        assert!(a.pattern().step().shares_graph(b.pattern().step()));
+        let data = b.to_data().unwrap();
+        assert_eq!(data["seed"], original["seed"]);
+        assert_eq!(data["step"], original["step"]);
+        b.evaluate(0).unwrap_err();
+    }
+}
+
 fn generator(source: &str) -> Pattern {
     let graph = Graph::compile(&core::parse(source, "pattern.ns").unwrap()).unwrap();
     Pattern::new(

@@ -163,3 +163,10 @@ only the current retained result and index, outside Pattern. Forward seeks reuse
 that result; backward seeks replay the seed. Failed evaluation leaves the cursor
 unchanged. It must agree with independent observation evaluation, including retained
 provenance, and never becomes the serialized Pattern representation.
+
+`observation.successor()` selects `(P,k+1)` without executing the step or copying
+the graph; it works beyond machine-integer indices. `cursor.observation()` returns
+the observation actually reached, initially `(P,0)`. A failed seek leaves both
+its state and observation unchanged. The cursor's execution budget does not
+restrict which indices can be represented lazily. Pattern remains a semantic
+pair over the shared graph, not a sixth opcode or a replacement for REFLECT.

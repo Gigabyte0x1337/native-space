@@ -90,6 +90,14 @@ fn repeat(pattern: &Pattern, mut current: State, count: u64) -> Result<State, La
 }
 
 impl Cursor {
+    /// Read the indexed observation reached by the last successful seek.
+    ///
+    /// This retains the same finite generator, not the current replay history.
+    #[must_use]
+    pub fn observation(&self) -> Observation {
+        self.pattern.observe(self.index.into())
+    }
+
     /// Seek without changing the cursor if evaluation fails.
     ///
     /// `maximum_steps` bounds the absolute selected index, not just new work.
@@ -173,6 +181,15 @@ impl Pattern {
 }
 
 impl Observation {
+    /// Select the next unwrapped repetition without executing or expanding its graph.
+    ///
+    /// Only the arbitrary-precision index changes. Evaluation remains explicit
+    /// and budgeted; this does not promise termination of an arbitrary step.
+    #[must_use]
+    pub fn successor(&self) -> Self {
+        self.pattern.observe(&self.index + 1_u32)
+    }
+
     /// Read the generator shared by every repetition.
     #[must_use]
     pub const fn pattern(&self) -> &Pattern {
