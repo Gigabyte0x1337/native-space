@@ -9,6 +9,7 @@
 
 pub mod batch;
 pub mod bytecode;
+pub mod compiled;
 pub mod continuation;
 pub mod core;
 pub mod derivation;
@@ -22,6 +23,7 @@ pub mod rank_policy;
 pub mod reflection;
 pub mod retained;
 pub mod strand;
+pub mod value_reflection;
 
 pub const LANGUAGE_VERSION: &str = "1.0";
 
@@ -167,7 +169,7 @@ pub fn expand_source(document: &Document) -> Result<String, LanguageError> {
 /// Returns the first semantic, type, or proof diagnostic.
 pub fn compile(document: &Document) -> Result<Value, LanguageError> {
     match document {
-        Document::State(program) => bytecode::compile(program).map(|artifact| artifact.to_data()),
+        Document::State(program) => compiled::compile(program).map(|artifact| artifact.to_data()),
         Document::Functions(library) if library.imports.is_empty() => {
             derivation::validate(library)?;
             Ok(

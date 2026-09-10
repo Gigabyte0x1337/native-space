@@ -21,7 +21,7 @@ fn scalar(real: &str, imag: &str) -> Scalar {
 fn run(source: &str) -> State {
     let program = core::parse(source, "model.ns").unwrap();
     let direct = retained::interpret(&program).unwrap();
-    let artifact = bytecode::compile(&program).unwrap();
+    let artifact = bytecode::lower(&program).unwrap();
     let restored = bytecode::BytecodeProgram::from_data(&artifact.to_data()).unwrap();
     let vm = bytecode::execute_retained(&restored).unwrap();
     assert!(vm.same_structure(&direct));
@@ -122,7 +122,7 @@ fn multiplication_square_reciprocal_and_phase_match_complex_arithmetic() {
         close(z, expected[1]);
     }
     let removed = core::parse("output orient(1, 1)", "removed.ns").unwrap();
-    bytecode::compile(&removed).unwrap_err();
+    bytecode::lower(&removed).unwrap_err();
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn boundary_phase_and_index_survive_multiplication_serialization_and_vm_storage(
             .unwrap()
             .same_structure(&state)
     );
-    let mut code = bytecode::compile(&core::parse("output 0", "boundary.ns").unwrap()).unwrap();
+    let mut code = bytecode::lower(&core::parse("output 0", "boundary.ns").unwrap()).unwrap();
     for instruction in &mut code.instructions {
         if instruction.opcode == bytecode::Opcode::PushScalar {
             instruction.operand = Some(bytecode::Operand::Scalar {
@@ -301,10 +301,10 @@ fn exact_depth_handles_extreme_magnitudes_without_floating_zero_collapse() {
 }
 
 #[test]
-fn rounded_mode_rounds_each_step_and_camera_remains_in_the_graph() {
+fn rounded_mode_rounds_each_step_and_reflection_remains_in_the_graph() {
     for source in [
         "output add(add(10000000000000000, 1), -10000000000000000) as number",
-        "output camera(7, 0, add(add(index(7, 10000000000000000), index(7, 1)), index(7, -10000000000000000))) as number",
+        "output reflect(add(add(index(7, 10000000000000000), index(7, 1)), index(7, -10000000000000000)), index(7, route_value, route_depth), route_value) as number",
     ] {
         let state = run(source);
         assert_eq!(state.output_data(OutputKind::Number).unwrap()["value"], "1");
@@ -317,13 +317,14 @@ fn rounded_mode_rounds_each_step_and_camera_remains_in_the_graph() {
         assert_eq!(rounded["value"]["approximate"], true);
         State::from_data(&rounded["value"]).unwrap_err();
     }
-    let source = run("output camera(7, 0, index(7, 1))");
+    let source =
+        run("output reflect(index(7, 1), index(7, route_value, route_depth), route_value)");
     assert!(
         source.native_data()["nodes"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|node| node["operator"]["operation"] == "camera")
+            .any(|node| node["operator"]["operation"] == "reflect")
     );
 }
 
@@ -365,7 +366,7 @@ fn numerical_failures_are_explicit_located_and_never_proofs() {
 
 #[test]
 fn empty_selection_reads_as_zero_without_erasing_indexed_zero_locations() {
-    let empty = run("output camera(7, 0, 1)");
+    let empty = run("output reflect(1, index(7, route_value, route_depth), route_value)");
     assert_eq!(
         empty.output_data(OutputKind::Vector).unwrap()["value"],
         json!([{"kind":"zero_boundary"}, null, null])

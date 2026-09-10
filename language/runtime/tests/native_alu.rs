@@ -4,8 +4,6 @@
 //! No production Rust ALU is registered or called by the native program. The
 //! finite bit domain makes exhaustive checking possible for this circuit width.
 
-use std::fmt::Write as _;
-
 use native_space_language::core::{Expr, NativeScalar, NativeState};
 use native_space_language::{Document, bytecode, core, expand_source};
 
@@ -150,33 +148,38 @@ fn native_proof_is_self_contained_current_and_zero_in_both_engines() {
     );
     let program = core::parse(PROOF, "alu-proof.ns").unwrap();
     assert!(core::interpret(&program).unwrap().is_zero());
-    let compiled = bytecode::compile(&program).unwrap();
+    let compiled = bytecode::lower(&program).unwrap();
     assert!(bytecode::execute(&compiled).unwrap().is_zero());
 }
 
 #[test]
 fn compiled_alu_contains_native_operations_and_matches_all_inputs() {
+    let program = core::parse(SOURCE, "compiled-alu.ns").unwrap();
+    let artifact = native_space_language::compiled::compile(&program).unwrap();
+    let artifact =
+        native_space_language::compiled::Artifact::from_data(&artifact.to_data()).unwrap();
+    let function = artifact.function("alu").unwrap();
     for opcode in 0..8 {
         for a in 0..16 {
             for b in 0..16 {
-                // Bindings keep inputs as VM loads during compilation; the compiler
-                // cannot just pre-evaluate a closed camera or replay a trace answer.
-                let values = input_text(a, b, opcode);
-                let values: Vec<_> = values.split(", ").collect();
-                let mut bindings = String::new();
-                for (i, v) in values.iter().enumerate() {
-                    writeln!(bindings, "let wire_{i} = {v}").unwrap();
-                }
-                let arguments = (0..11)
-                    .map(|i| format!("wire_{i}"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let source = format!(
-                    "{}\n{bindings}output alu({arguments}) as pattern",
-                    definitions()
-                );
-                let program = core::parse(&source, "compiled-alu.ns").unwrap();
-                let compiled = bytecode::compile(&program).unwrap();
+                // All inputs use one saved/reloaded function graph. Each retained
+                // result must still contain operations and replay in the stack VM.
+                let arguments = inputs(a, b, opcode)
+                    .iter()
+                    .map(|state| {
+                        native_space_language::strand::execution::Value::State(
+                            native_space_language::retained::State::from_projection(state),
+                        )
+                    })
+                    .collect();
+                let state = function.call(arguments).unwrap().native().unwrap();
+                let compiled = bytecode::lower_state(
+                    &state,
+                    "compiled-alu.ns",
+                    core::Goal::Emit,
+                    core::OutputKind::Pattern,
+                )
+                .unwrap();
                 for opcode in [
                     bytecode::Opcode::Add,
                     bytecode::Opcode::Multiply,
@@ -198,7 +201,7 @@ fn compiled_alu_contains_native_operations_and_matches_all_inputs() {
 
 fn core_only(expression: &Expr) -> bool {
     match expression {
-        Expr::Zero { .. } | Expr::One { .. } | Expr::Scalar { .. } | Expr::Reference { .. } => true,
+        Expr::Literal { .. } | Expr::Reference { .. } => true,
         Expr::Add { operands, .. } | Expr::Multiply { operands, .. } => {
             operands.iter().all(core_only)
         }
@@ -226,14 +229,14 @@ fn expanded_alu_has_no_host_alu_or_noncore_computation() {
 #[test]
 fn reflected_alu_executes_the_native_circuit() {
     let source = format!(
-        "{}\noutput apply(trace(alu), {}) as pattern",
+        "{}\noutput (alu)({}) as pattern",
         definitions(),
         input_text(7, 1, 0)
     );
     let program = core::parse(&source, "reflected-alu.ns").unwrap();
     assert_eq!(core::interpret(&program).unwrap(), expected(7, 1, 0));
     assert_eq!(
-        bytecode::execute(&bytecode::compile(&program).unwrap()).unwrap(),
+        bytecode::execute(&bytecode::lower(&program).unwrap()).unwrap(),
         expected(7, 1, 0)
     );
 }

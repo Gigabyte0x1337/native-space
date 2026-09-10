@@ -585,10 +585,12 @@ fn write_native(bytes: &mut Vec<u8>, state: &State) -> Result<(), String> {
                 write_u64(bytes, direction);
                 write_u64(bytes, depth);
             }
-            Operation::Camera { from, to } => {
-                bytes.push(5);
-                write_u64(bytes, from);
-                write_u64(bytes, to);
+            Operation::Reflect { rule } => {
+                bytes.push(6);
+                write_text(
+                    bytes,
+                    &serde_json::to_string(&rule).map_err(|error| error.to_string())?,
+                )?;
             }
         }
         for edges in [&step.inputs, &step.retained] {
@@ -642,9 +644,9 @@ fn read_native(reader: &mut BinaryReader<'_>) -> Result<State, String> {
                 direction: reader.read_u64("index direction")?,
                 depth: reader.read_u64("index depth")?,
             },
-            5 => Operation::Camera {
-                from: reader.read_u64("camera source")?,
-                to: reader.read_u64("camera destination")?,
+            6 => Operation::Reflect {
+                rule: serde_json::from_str(reader.read_text("reflect rule")?)
+                    .map_err(|error| format!("invalid reflect rule: {error}"))?,
             },
             _ => return Err("unknown native operator".into()),
         };
@@ -913,7 +915,7 @@ mod tests {
     }
 
     #[test]
-    fn binary_round_trip_preserves_deferred_camera_and_boundary_phase() {
+    fn binary_round_trip_preserves_reflection_subject_and_boundary_phase() {
         use crate::retained::{Depth, Scalar};
         let boundary = Scalar::from_coordinates(
             Depth::of(&NativeScalar::zero()),
@@ -929,8 +931,14 @@ mod tests {
         let decoded = decode_binary(&encoded).unwrap();
         assert!(decoded[0].state().same_structure(&state));
         assert_eq!(
-            decoded[0].state().output_data(OutputKind::Vector).unwrap()["value"][2],
+            decoded[0].state().inputs()[0].inputs()[0].inputs()[0]
+                .output_data(OutputKind::Vector)
+                .unwrap()["value"][2],
             json!({"kind":"finite", "value":"1"})
+        );
+        assert_eq!(
+            decoded[0].state().output_data(OutputKind::Vector).unwrap()["value"][2],
+            serde_json::Value::Null
         );
         for end in 0..encoded.len() {
             decode_binary(&encoded[..end]).unwrap_err();
@@ -1007,7 +1015,7 @@ mod tests {
     fn complete_data_pack_is_passed_to_one_variadic_source_function() {
         let program = parse(
             "let sum = (left, right) => add(left, right)\n\
-             let train = (observations...) => fold(sum, zero, observations...)\n\
+             let train = (observations...) => add(observations...)\n\
              output zero",
             "data-program.ns",
         )

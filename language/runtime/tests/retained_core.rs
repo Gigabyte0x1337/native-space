@@ -15,7 +15,7 @@ fn run(source: &str) -> State {
         panic!("expected an executable document");
     };
     let direct = retained::interpret(&program).unwrap();
-    let artifact = bytecode::compile(&program).unwrap();
+    let artifact = bytecode::lower(&program).unwrap();
     let vm = bytecode::execute_retained(&artifact).unwrap();
     assert!(direct.same_structure(&vm));
     assert!(direct.same_projection(&vm));
@@ -336,13 +336,13 @@ fn cli_runs_retained_states_and_explicit_projections_and_names_zero_proofs() {
 }
 
 #[test]
-fn source_calls_cameras_folds_and_reflection_keep_hidden_inputs() {
+fn source_calls_packs_and_reflection_keep_hidden_inputs() {
     for source in [
         "let discard = (x) => 1\noutput discard(multiply(7, 0))",
         "let x = multiply(7, 0)\noutput 1",
-        "output camera(3, 0, add(index(3, 1), index(4, multiply(7, 0))))",
-        "let sum = (a, b) => add(a, b)\nlet f = (xs...) => fold(sum, 0, xs...)\noutput f(multiply(7, 0), 1)",
-        "let discard = (x) => 1\noutput apply(trace(discard), multiply(7, 0))",
+        "output reflect(add(index(3, 1), index(4, multiply(7, 0))), index(3, route_value, route_depth), route_value)",
+        "let sum = (a, b) => add(a, b)\nlet f = (xs...) => add(xs...)\noutput f(multiply(7, 0), 1)",
+        "let discard = (x) => 1\noutput (discard)(multiply(7, 0))",
     ] {
         let state = run(source);
         assert!(state.same_projection(&State::one()));
@@ -360,7 +360,7 @@ fn source_calls_cameras_folds_and_reflection_keep_hidden_inputs() {
                 .unwrap()
                 .iter()
                 .any(|node| !node["retained"].as_array().unwrap().is_empty()
-                    || node["operator"]["operation"] == "camera"),
+                    || node["operator"]["operation"] == "reflect"),
             "{source}"
         );
     }
@@ -550,7 +550,7 @@ fn classical_input_lifting_preserves_index_depths_larger_than_u64() {
 #[test]
 fn vm_rejects_malformed_retention_with_a_source_location() {
     let program = core::parse("let f = (x) => 1\noutput f(7)", "scope.ns").unwrap();
-    let artifact = bytecode::compile(&program).unwrap();
+    let artifact = bytecode::lower(&program).unwrap();
     for count in [-1, 0, i64::MAX] {
         let mut bad = artifact.clone();
         let instruction = bad

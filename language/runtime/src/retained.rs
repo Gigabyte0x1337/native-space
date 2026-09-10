@@ -28,8 +28,7 @@ use crate::core::{
 };
 
 pub mod coordinates;
-pub(crate) mod evaluation;
-mod field;
+pub(crate) mod field;
 pub mod numeric;
 mod scalar;
 #[doc(inline)]
@@ -99,7 +98,7 @@ pub(crate) enum Operation {
     Multiply,
     Phase { turns: i64 },
     Index { direction: u64, depth: u64 },
-    Camera { from: u64, to: u64 },
+    Reflect { rule: crate::value_reflection::Rule },
 }
 
 #[derive(Debug)]
@@ -142,6 +141,12 @@ impl std::fmt::Debug for State {
 }
 
 impl State {
+    pub(crate) fn reflect(&self, rule: &crate::value_reflection::Rule) -> Self {
+        Self::new(
+            Operation::Reflect { rule: rule.clone() },
+            vec![self.clone()],
+        )
+    }
     fn new(operation: Operation, inputs: Vec<Self>) -> Self {
         Self(Arc::new(Node {
             operation,
@@ -314,13 +319,29 @@ impl State {
         let Some(first) = terms.next() else {
             return Self::zero();
         };
-        terms.fold(first, |sum, term| sum.add(&term))
+        // A balanced sum keeps a later replay from caching every growing prefix (quadratic
+        // space for large program-record fields). Distinct indexed terms cannot
+        // change each other's rounding or cancellation when regrouped.
+        let mut level = std::iter::once(first).chain(terms).collect::<Vec<_>>();
+        while level.len() > 1 {
+            level = level
+                .chunks(2)
+                .map(|pair| {
+                    if pair.len() == 2 {
+                        pair[0].add(&pair[1])
+                    } else {
+                        pair[0].clone()
+                    }
+                })
+                .collect();
+        }
+        level.pop().expect("nonempty coordinate sum")
     }
 
     /// Select indexed coordinates while keeping the complete source state.
     #[must_use]
     pub fn camera(&self, from: u64, to: u64) -> Self {
-        Self::new(Operation::Camera { from, to }, vec![self.clone()])
+        self.reflect(&crate::value_reflection::Rule::route(from, to))
     }
 
     /// Read a branch by its ordered operand path, including cancelled branches.
@@ -366,7 +387,7 @@ impl State {
                     }))
                 }
                 Operation::Phase { turns } => observed(0).phase(*turns),
-                Operation::Camera { from, to } => observed(0).camera(*from, *to),
+                Operation::Reflect { rule } => rule.apply(observed(0)),
                 Operation::Index { direction, depth } => observed(0)
                     .index_power(*direction, *depth)
                     .expect("validated positive index direction"),
@@ -403,6 +424,10 @@ impl State {
             pending.extend(left.retained_inputs().iter().zip(right.retained_inputs()));
         }
         true
+    }
+
+    pub(crate) fn identity(&self) -> usize {
+        self.key().addr()
     }
 
     fn key(&self) -> *const Node {
@@ -521,7 +546,10 @@ impl State {
                 (Operation::Index { direction, depth }, [value]) => {
                     value.index_power(*direction, *depth)?
                 }
-                (Operation::Camera { from, to }, [value]) => value.camera(*from, *to),
+                (Operation::Reflect { rule }, [value]) => {
+                    rule.validate()?;
+                    value.reflect(rule)
+                }
                 _ => return Err("invalid retained operator parameters or input count".into()),
             };
             let retained =
@@ -660,13 +688,13 @@ mod tests {
     #[test]
     fn indexed_camera_construction_and_vm_replay_remain_lazy() {
         let program = crate::core::parse(
-            "let select = (x) => camera(7, 0, index(7, phase(1, x)))\noutput select(3)",
+            "let select = (x) => reflect(index(7, phase(1, x)), index(7, route_value, route_depth), route_value)\noutput select(3)",
             "camera.ns",
         )
         .unwrap();
         let direct = interpret(&program).unwrap();
         assert_unobserved(&direct);
-        let code = crate::bytecode::compile(&program).unwrap();
+        let code = crate::bytecode::lower(&program).unwrap();
         let replay = crate::bytecode::execute_retained(&code).unwrap();
         assert_unobserved(&replay);
         assert!(direct.same_structure(&replay));
@@ -686,8 +714,8 @@ mod tests {
         assert_unobserved(&direct);
         let restored = State::from_data(&saved).unwrap();
         assert_unobserved(&restored);
-        let vm = crate::bytecode::execute_retained(&crate::bytecode::compile(&program).unwrap())
-            .unwrap();
+        let vm =
+            crate::bytecode::execute_retained(&crate::bytecode::lower(&program).unwrap()).unwrap();
         assert_unobserved(&vm);
         assert!(direct.same_structure(&vm));
         assert_unobserved(&direct);
@@ -699,7 +727,7 @@ mod tests {
     #[test]
     fn reflected_apply_observes_the_program_but_not_its_unused_native_argument() {
         let program = crate::core::parse(
-            "let discard = (x) => 1\nlet invoke = (x) => apply(trace(discard), x)\noutput 0",
+            "let discard = (x) => 1\nlet invoke = (x) => (discard)(x)\noutput 0",
             "apply.ns",
         )
         .unwrap();

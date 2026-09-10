@@ -379,9 +379,7 @@ struct ShaderBuilder {
 impl ShaderBuilder {
     fn expression(&mut self, expression: &Expr) -> Result<String, LanguageError> {
         match expression {
-            Expr::Zero { .. } => Ok("0i".into()),
-            Expr::One { .. } => Ok("1i".into()),
-            Expr::Scalar { real, imag, .. } => self.integer_constant(real, imag),
+            Expr::Literal { real, imag, .. } => self.integer_constant(real, imag),
             Expr::Reference { name, .. } if name == "input" => Ok("input".into()),
             Expr::Add { operands, .. } => self.fold(operands, "checked_add"),
             Expr::Multiply { operands, .. } => self.fold(operands, "checked_multiply"),

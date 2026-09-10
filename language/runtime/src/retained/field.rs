@@ -11,9 +11,10 @@ use std::collections::BTreeMap;
 use super::{Operation, Scalar, ScalarData, State};
 use crate::core::{MultiIndex, NativeScalar};
 
-pub(super) type Field<C> = BTreeMap<MultiIndex, C>;
+pub(crate) type Field<C> = BTreeMap<MultiIndex, C>;
 
-pub(super) trait Coefficient: Clone {
+pub(crate) trait Coefficient: Clone {
+    fn is_zero(&self) -> bool;
     fn scalar(data: &ScalarData) -> Result<Self, String>;
     fn add(&self, right: &Self) -> Result<Self, String>;
     fn multiply(&self, right: &Self) -> Result<Self, String>;
@@ -21,6 +22,9 @@ pub(super) trait Coefficient: Clone {
 }
 
 impl Coefficient for Scalar {
+    fn is_zero(&self) -> bool {
+        self.project().is_zero()
+    }
     fn scalar(data: &ScalarData) -> Result<Self, String> {
         Self::from_data(data)
     }
@@ -35,7 +39,7 @@ impl Coefficient for Scalar {
     }
 }
 
-fn accumulate<C: Coefficient>(
+pub(crate) fn accumulate<C: Coefficient>(
     field: &mut Field<C>,
     index: MultiIndex,
     value: C,
@@ -82,13 +86,16 @@ pub(super) fn evaluate<C: Coefficient>(
     Ok(fields)
 }
 
-fn evaluate_step<C: Coefficient>(
+pub(crate) fn evaluate_step<C: Coefficient>(
     operation: &Operation,
     inputs: &[usize],
     fields: &[Field<C>],
 ) -> Result<Field<C>, String> {
     let mut result = Field::new();
     match operation {
+        Operation::Reflect { rule } => {
+            return rule.apply_field(&fields[inputs[0]]);
+        }
         Operation::Scalar { coordinates } => {
             result.insert(MultiIndex::default(), C::scalar(coordinates)?);
         }
@@ -117,13 +124,6 @@ fn evaluate_step<C: Coefficient>(
         Operation::Index { direction, depth } => {
             for (index, value) in &fields[inputs[0]] {
                 result.insert(index.shift_by(*direction, *depth)?, value.clone());
-            }
-        }
-        Operation::Camera { from, to } => {
-            for (index, value) in &fields[inputs[0]] {
-                if let Some(mapped) = index.camera(*from, *to) {
-                    accumulate(&mut result, mapped, value.clone())?;
-                }
             }
         }
     }

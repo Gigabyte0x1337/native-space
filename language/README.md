@@ -10,7 +10,7 @@ is 1.0. Syntax is documented in [SPEC.md](SPEC.md).
 
 The requirement is to keep what a numerical answer loses. A shared immutable
 operation graph therefore owns scalar inputs, ADD, MULTIPLY, PHASE, INDEX,
-indexed camera reads, and call-scope dependencies. Inputs survive cancellation
+REFLECT, and call-scope dependencies. Inputs survive cancellation
 and unused arguments survive calls. Classical equality does not authorize
 deleting this retained structure.
 
@@ -34,13 +34,21 @@ General frame transformations remain separate from cyclic phase.
 
 ## Evaluation and cameras
 
-Constructing a graph does not evaluate its arithmetic. In particular,
-`camera(from, to, state)` is retained as a read operation, not replaced by an
-eagerly computed constant. The bytecode VM replays that read after its input
-graph. This prevents a rounded run from secretly evaluating selected subtrees
-exactly. Camera routing is not a new arithmetic primitive.
+`reflect(subject, pattern, replacement)` matches canonical indexed values,
+not construction history. Its retained node contains a precompiled rule and
+the original subject. Scaling and phase before the node therefore remain
+visible to the matcher. See [the reflection contract](REFLECTION.md) for
+capture scope, supported patterns, and shared function-graph execution.
 
-`retained::interpret` and `bytecode::execute_retained` return full states.
+Constructing a graph does not evaluate its arithmetic. Selection is retained as
+REFLECT with its subject and rule, and replayed after its inputs. Host coordinate
+routing uses this same rule; there is no separate Camera opcode.
+Canonical reflection does not match zero-valued terms. Their boundary phase and
+history remain in the retained subject, not in the selected result.
+
+`retained::interpret` and `compiled::execute_retained` run the shared function
+graph and return full states. `compiled::compile` does not run the program.
+`bytecode::lower` separately lowers an executed state for stack replay.
 `bytecode::execute` explicitly returns the classical projection.
 `same_structure` and `same_projection` intentionally ask different questions.
 
@@ -60,10 +68,25 @@ replace their algorithms. Default compilation still bypasses the old optimizer.
 This deliberately trades storage and exact-arithmetic cost for recoverable
 structure. It is not a universal optimizer or an arbitrary-range float engine.
 
+## Shared functions
+
+```ns
+let f = (a, b) => add(multiply(a, 2), b)
+let g = f(3)
+output g(4) as number
+# 10
+```
+
+Calls share one compiled Native graph and keep independent binding environments.
+Zero is explicitly present when bound. Function values are Native data, so
+`reflect(f, value, value)` can be called normally too; there is no `apply`
+primitive. Recursive calls use fresh bindings and bounded heap frames.
+[Reflection](REFLECTION.md) explains the design and remaining separate tools.
+
 ## Saving and feedback
 
 JSON and [NSBATCH](ARRAY-DATA.md) retain full native graphs, including ordered
-operands, scoped inputs, zero leaves, and deferred cameras. Codecs share one
+operands, scoped inputs, zero leaves, and deferred reflection. Codecs share one
 validator and reject malformed, unreachable, or forged observations. There is
 no compatibility decoder. Scalar bytecode stores native coordinates directly,
 so a zero-boundary phase is not lost by converting it to a classical zero.

@@ -26,6 +26,9 @@ Cartesian origin. Exact zero is a separate negative-infinity depth boundary.
 Multiplication adds depths and combines phases. Squaring a value doubles both.
 Addition combines contributions; cancellation does not erase their source.
 These are the roles of **ADD, MULTIPLY, PHASE, INDEX**.
+**REFLECT** matches parts of an evaluated Native state and rebuilds them.
+Together these are the five language operations; functions are directly
+inspectable Native graphs, not a separate trace format.
 
 The classical value is a readout of this pattern. Cone and sphere coordinates
 are derived views, not the core. A numerical readout alone does not retain

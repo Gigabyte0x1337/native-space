@@ -495,18 +495,16 @@ impl NativeState {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Expr {
-    Reflect {
-        operation: crate::reflection::Operation,
+    Call {
+        callee: Box<Expr>,
         arguments: Vec<Expr>,
         span: Option<Span>,
     },
-    Zero {
+    Reflect {
+        arguments: Vec<Expr>,
         span: Option<Span>,
     },
-    One {
-        span: Option<Span>,
-    },
-    Scalar {
+    Literal {
         real: String,
         imag: String,
         span: Option<Span>,
@@ -517,52 +515,6 @@ pub enum Expr {
     },
     Spread {
         name: String,
-        span: Option<Span>,
-    },
-    Call {
-        function: String,
-        arguments: Vec<Expr>,
-        span: Option<Span>,
-    },
-    Concat {
-        direction: u64,
-        values: Vec<Expr>,
-        span: Option<Span>,
-    },
-    Fold {
-        function: String,
-        initial: Box<Expr>,
-        values: Vec<Expr>,
-        span: Option<Span>,
-    },
-    Camera {
-        from_direction: u64,
-        to_direction: u64,
-        value: Box<Expr>,
-        span: Option<Span>,
-    },
-    Trace {
-        function: String,
-        span: Option<Span>,
-    },
-    Length {
-        value: Box<Expr>,
-        span: Option<Span>,
-    },
-    Untrace {
-        value: Box<Expr>,
-        rank: String,
-        span: Option<Span>,
-    },
-    RankDescent {
-        value: Box<Expr>,
-        target_rank: Option<String>,
-        minimum_agreement: Option<String>,
-        span: Option<Span>,
-    },
-    Apply {
-        pattern: Box<Expr>,
-        position: u64,
         span: Option<Span>,
     },
     Add {
@@ -584,30 +536,41 @@ pub enum Expr {
         value: Box<Expr>,
         span: Option<Span>,
     },
+    /// INDEX template syntax; the depth name is local to a REFLECT rule.
+    IndexCapture {
+        direction: u64,
+        depth: String,
+        value: Box<Expr>,
+        span: Option<Span>,
+    },
 }
 
 impl Expr {
+    pub(crate) fn integer(value: i64, span: Option<Span>) -> Self {
+        Self::Literal {
+            real: value.to_string(),
+            imag: "0".into(),
+            span,
+        }
+    }
+    fn is_integer(&self, value: i64) -> bool {
+        matches!(self, Self::Literal { real, imag, .. }
+            if NativeScalar::from_text(real, imag).ok()
+                == NativeScalar::from_text(&value.to_string(), "0").ok())
+    }
+
     #[must_use]
     pub const fn span(&self) -> Option<Span> {
         match self {
-            Self::Zero { span }
+            Self::Call { span, .. }
             | Self::Reflect { span, .. }
-            | Self::One { span }
-            | Self::Scalar { span, .. }
+            | Self::Literal { span, .. }
             | Self::Reference { span, .. }
             | Self::Spread { span, .. }
-            | Self::Call { span, .. }
-            | Self::Concat { span, .. }
-            | Self::Fold { span, .. }
-            | Self::Camera { span, .. }
-            | Self::Trace { span, .. }
-            | Self::Length { span, .. }
-            | Self::Untrace { span, .. }
-            | Self::RankDescent { span, .. }
-            | Self::Apply { span, .. }
             | Self::Add { span, .. }
             | Self::Multiply { span, .. }
             | Self::Phase { span, .. }
+            | Self::IndexCapture { span, .. }
             | Self::Index { span, .. } => *span,
         }
     }
@@ -707,15 +670,7 @@ pub(crate) const LANGUAGE_NAMESPACE: &[(&str, LanguageNameKind)] = &[
     ("MULTIPLY", LanguageNameKind::CoreOperation),
     ("PHASE", LanguageNameKind::CoreOperation),
     ("INDEX", LanguageNameKind::CoreOperation),
-    ("trace", LanguageNameKind::ExactGrammar),
-    ("length", LanguageNameKind::ExactGrammar),
-    ("untrace", LanguageNameKind::ExactGrammar),
-    ("rank_descent", LanguageNameKind::ExactGrammar),
-    ("apply", LanguageNameKind::ExactGrammar),
-    ("rewrite", LanguageNameKind::ExactGrammar),
-    ("concat", LanguageNameKind::ExactGrammar),
-    ("fold", LanguageNameKind::ExactGrammar),
-    ("camera", LanguageNameKind::ExactGrammar),
+    ("reflect", LanguageNameKind::CoreOperation),
     ("zero", LanguageNameKind::ExactGrammar),
     ("one", LanguageNameKind::ExactGrammar),
     ("scalar", LanguageNameKind::ExactGrammar),
@@ -1328,6 +1283,28 @@ impl Parser {
 
     fn operator_expression(&mut self, minimum_precedence: usize) -> Result<Expr, LanguageError> {
         let mut left = self.atom()?;
+        while self.current().kind == TokenKind::LParen {
+            self.advance();
+            let mut arguments = Vec::new();
+            if self.current().kind != TokenKind::RParen {
+                arguments.push(self.expression()?);
+                while self.current().kind == TokenKind::Comma {
+                    self.advance();
+                    arguments.push(self.expression()?);
+                }
+            }
+            let end = self.expect(
+                TokenKind::RParen,
+                "NSP033",
+                "expected ')' after function arguments",
+            )?;
+            let span = left.span().map(|start| start.join(end.span));
+            left = Expr::Call {
+                callee: Box::new(left),
+                arguments,
+                span,
+            };
+        }
         while let Some((name, precedence)) = self
             .current_operator()
             .map(|(name, precedence)| (name.to_owned(), precedence))
@@ -1342,7 +1319,7 @@ impl Parser {
                 .zip(right.span())
                 .map(|(first, last)| first.join(last));
             left = Expr::Call {
-                function: name,
+                callee: Box::new(Expr::Reference { name, span }),
                 arguments: vec![left, right],
                 span,
             };
@@ -1369,7 +1346,7 @@ impl Parser {
             rational(&literal.text).map_err(|message| {
                 fail("NST005", message, &self.source_name, Some(literal.span))
             })?;
-            return Ok(Expr::Scalar {
+            return Ok(Expr::Literal {
                 real: literal.text,
                 imag: "0".into(),
                 span: Some(literal.span),
@@ -1377,12 +1354,8 @@ impl Parser {
         }
         let start = self.expect(TokenKind::Ident, "NSP008", "expected a state expression")?;
         match start.text.as_str() {
-            "zero" => Ok(Expr::Zero {
-                span: Some(start.span),
-            }),
-            "one" => Ok(Expr::One {
-                span: Some(start.span),
-            }),
+            "zero" => Ok(Expr::integer(0, Some(start.span))),
+            "one" => Ok(Expr::integer(1, Some(start.span))),
             "scalar" => {
                 self.expect(TokenKind::LParen, "NSP010", "expected '(' after 'scalar'")?;
                 let real = self.fraction()?;
@@ -1397,7 +1370,7 @@ impl Parser {
                     "NSP012",
                     "expected ')' after scalar coordinates",
                 )?;
-                Ok(Expr::Scalar {
+                Ok(Expr::Literal {
                     real,
                     imag,
                     span: Some(start.span.join(end.span)),
@@ -1468,6 +1441,20 @@ impl Parser {
                 let value = Box::new(self.expression()?);
                 let multiplicity = if self.current().kind == TokenKind::Comma {
                     self.advance();
+                    if self.current().kind == TokenKind::Ident {
+                        let depth = self.advance().text.clone();
+                        let end = self.expect(
+                            TokenKind::RParen,
+                            "NSP020",
+                            "expected ')' after index expression",
+                        )?;
+                        return Ok(Expr::IndexCapture {
+                            direction,
+                            depth,
+                            value,
+                            span: Some(start.span.join(end.span)),
+                        });
+                    }
                     self.positive("NST003", "index multiplicity must be a positive integer")?
                 } else {
                     1
@@ -1484,193 +1471,8 @@ impl Parser {
                     span: Some(start.span.join(end.span)),
                 })
             }
-            "concat" => {
-                self.expect(TokenKind::LParen, "NSP055", "expected '(' after 'concat'")?;
-                let direction =
-                    self.positive("NST006", "concat direction must be a positive integer")?;
-                self.expect(
-                    TokenKind::Comma,
-                    "NSP056",
-                    "expected ',' after concat direction",
-                )?;
-                let mut values = vec![self.expression()?];
-                while self.current().kind == TokenKind::Comma {
-                    self.advance();
-                    values.push(self.expression()?);
-                }
-                let end = self.expect(
-                    TokenKind::RParen,
-                    "NSP057",
-                    "expected ')' after concat values",
-                )?;
-                Ok(Expr::Concat {
-                    direction,
-                    values,
-                    span: Some(start.span.join(end.span)),
-                })
-            }
-            "fold" => {
-                self.expect(TokenKind::LParen, "NSP058", "expected '(' after 'fold'")?;
-                let function = self.expect(
-                    TokenKind::Ident,
-                    "NSP059",
-                    "fold expects a source function name",
-                )?;
-                self.expect(
-                    TokenKind::Comma,
-                    "NSP060",
-                    "expected ',' after fold function",
-                )?;
-                let initial = Box::new(self.expression()?);
-                self.expect(
-                    TokenKind::Comma,
-                    "NSP061",
-                    "expected ',' after fold initial value",
-                )?;
-                let mut values = vec![self.expression()?];
-                while self.current().kind == TokenKind::Comma {
-                    self.advance();
-                    values.push(self.expression()?);
-                }
-                let end = self.expect(
-                    TokenKind::RParen,
-                    "NSP062",
-                    "expected ')' after fold values",
-                )?;
-                Ok(Expr::Fold {
-                    function: function.text,
-                    initial,
-                    values,
-                    span: Some(start.span.join(end.span)),
-                })
-            }
-            "camera" => {
-                self.expect(TokenKind::LParen, "NSP063", "expected '(' after 'camera'")?;
-                let from_direction = self.positive(
-                    "NST008",
-                    "camera source direction must be a positive integer",
-                )?;
-                self.expect(
-                    TokenKind::Comma,
-                    "NSP064",
-                    "expected ',' after camera source direction",
-                )?;
-                let to_direction = self.nonnegative(
-                    "NST008",
-                    "camera destination direction must be a nonnegative integer",
-                )?;
-                self.expect(
-                    TokenKind::Comma,
-                    "NSP065",
-                    "expected ',' after camera destination direction",
-                )?;
-                let value = Box::new(self.expression()?);
-                let end = self.expect(
-                    TokenKind::RParen,
-                    "NSP066",
-                    "expected ')' after camera value",
-                )?;
-                Ok(Expr::Camera {
-                    from_direction,
-                    to_direction,
-                    value,
-                    span: Some(start.span.join(end.span)),
-                })
-            }
-            "trace" => {
-                self.expect(TokenKind::LParen, "NSP046", "expected '(' after 'trace'")?;
-                let function = self.expect(
-                    TokenKind::Ident,
-                    "NSP047",
-                    "trace expects a source function name",
-                )?;
-                let end = self.expect(
-                    TokenKind::RParen,
-                    "NSP048",
-                    "expected ')' after trace target",
-                )?;
-                Ok(Expr::Trace {
-                    function: function.text,
-                    span: Some(start.span.join(end.span)),
-                })
-            }
-            "length" => {
-                self.expect(TokenKind::LParen, "NSP052", "expected '(' after 'length'")?;
-                let value = Box::new(self.expression()?);
-                let end = self.expect(
-                    TokenKind::RParen,
-                    "NSP053",
-                    "expected ')' after length argument",
-                )?;
-                Ok(Expr::Length {
-                    value,
-                    span: Some(start.span.join(end.span)),
-                })
-            }
-            "untrace" => {
-                self.expect(TokenKind::LParen, "NSP049", "expected '(' after 'untrace'")?;
-                let value = Box::new(self.expression()?);
-                let rank = if self.current().kind == TokenKind::Comma {
-                    self.advance();
-                    self.unit_ratio(
-                        "NSP051",
-                        "untrace rank must be an exact number from 0 through 1",
-                    )?
-                } else {
-                    "1".into()
-                };
-                let end = self.expect(
-                    TokenKind::RParen,
-                    "NSP050",
-                    "expected ')' after untrace arguments",
-                )?;
-                Ok(Expr::Untrace {
-                    value,
-                    rank,
-                    span: Some(start.span.join(end.span)),
-                })
-            }
-            "rank_descent" => {
-                self.expect(
-                    TokenKind::LParen,
-                    "NSP067",
-                    "expected '(' after 'rank_descent'",
-                )?;
-                let value = Box::new(self.expression()?);
-                let target_rank = match self.current().kind {
-                    TokenKind::Comma => {
-                        self.advance();
-                        Some(self.nonzero_unit_ratio(
-                            "NSP069",
-                            "rank_descent target rank must be exact, greater than zero through one",
-                        )?)
-                    }
-                    _ => None,
-                };
-                let minimum_agreement = match self.current().kind {
-                    TokenKind::Comma => {
-                        self.advance();
-                        Some(self.unit_ratio(
-                            "NSP074",
-                            "rank_descent minimum agreement must be exact, from zero through one",
-                        )?)
-                    }
-                    _ => None,
-                };
-                let end = self.expect(
-                    TokenKind::RParen,
-                    "NSP068",
-                    "expected ')' after rank_descent arguments",
-                )?;
-                Ok(Expr::RankDescent {
-                    value,
-                    target_rank,
-                    minimum_agreement,
-                    span: Some(start.span.join(end.span)),
-                })
-            }
-            "rewrite" => {
-                self.expect(TokenKind::LParen, "NSP075", "expected '(' after rewrite")?;
+            "reflect" => {
+                self.expect(TokenKind::LParen, "NSP075", "expected '(' after reflect")?;
                 let mut arguments = vec![self.expression()?];
                 while self.current().kind == TokenKind::Comma {
                     self.advance();
@@ -1679,57 +1481,18 @@ impl Parser {
                 let end = self.expect(
                     TokenKind::RParen,
                     "NSP075",
-                    "expected ')' after rewrite arguments",
+                    "expected ')' after reflect arguments",
                 )?;
                 if arguments.len() != 3 {
                     return Err(fail(
                         "NSP075",
-                        "rewrite expects graph, pattern, and replacement",
+                        "reflect expects subject, pattern, and replacement",
                         &self.source_name,
                         Some(start.span),
                     ));
                 }
                 Ok(Expr::Reflect {
-                    operation: crate::reflection::Operation::Rewrite,
                     arguments,
-                    span: Some(start.span.join(end.span)),
-                })
-            }
-            "apply" => {
-                self.expect(TokenKind::LParen, "NSP070", "expected '(' after 'apply'")?;
-                let pattern = Box::new(self.expression()?);
-                if !matches!(pattern.as_ref(), Expr::RankDescent { .. }) {
-                    let mut arguments = vec![*pattern];
-                    while self.current().kind == TokenKind::Comma {
-                        self.advance();
-                        arguments.push(self.expression()?);
-                    }
-                    let end = self.expect(
-                        TokenKind::RParen,
-                        "NSP071",
-                        "expected ')' after apply arguments",
-                    )?;
-                    return Ok(Expr::Reflect {
-                        operation: crate::reflection::Operation::Apply,
-                        arguments,
-                        span: Some(start.span.join(end.span)),
-                    });
-                }
-                self.expect(
-                    TokenKind::Comma,
-                    "NSP071",
-                    "expected ',' after apply pattern",
-                )?;
-                let position =
-                    self.positive("NSP072", "apply position must be a positive integer")?;
-                let end = self.expect(
-                    TokenKind::RParen,
-                    "NSP071",
-                    "expected ')' after apply position",
-                )?;
-                Ok(Expr::Apply {
-                    pattern,
-                    position,
                     span: Some(start.span.join(end.span)),
                 })
             }
@@ -1768,7 +1531,10 @@ impl Parser {
                     "expected ')' after function arguments",
                 )?;
                 Ok(Expr::Call {
-                    function: name.into(),
+                    callee: Box::new(Expr::Reference {
+                        name: name.into(),
+                        span: Some(start.span),
+                    }),
                     arguments,
                     span: Some(start.span.join(end.span)),
                 })
@@ -1809,10 +1575,6 @@ impl Parser {
         self.unsigned(code, message, true)
     }
 
-    fn nonnegative(&mut self, code: &str, message: &str) -> Result<u64, LanguageError> {
-        self.unsigned(code, message, false)
-    }
-
     fn unsigned(
         &mut self,
         code: &str,
@@ -1830,26 +1592,6 @@ impl Parser {
             return Err(fail(code, message, &self.source_name, Some(token.span)));
         }
         Ok(value)
-    }
-
-    fn unit_ratio(&mut self, code: &str, message: &str) -> Result<String, LanguageError> {
-        let token = self.expect(TokenKind::Number, code, message)?;
-        let value = rational(&token.text)
-            .map_err(|_parse_error| fail(code, message, &self.source_name, Some(token.span)))?;
-        if value < BigRational::zero() || value > BigRational::one() {
-            return Err(fail(code, message, &self.source_name, Some(token.span)));
-        }
-        Ok(token.text)
-    }
-
-    fn nonzero_unit_ratio(&mut self, code: &str, message: &str) -> Result<String, LanguageError> {
-        let token = self.expect(TokenKind::Number, code, message)?;
-        let value = rational(&token.text)
-            .map_err(|_parse_error| fail(code, message, &self.source_name, Some(token.span)))?;
-        if value <= BigRational::zero() || value > BigRational::one() {
-            return Err(fail(code, message, &self.source_name, Some(token.span)));
-        }
-        Ok(token.text)
     }
 }
 
@@ -1873,7 +1615,7 @@ fn utf8_expression(
             value: Box::new(Expr::Index {
                 direction: byte_direction,
                 multiplicity: 1,
-                value: Box::new(Expr::One { span }),
+                value: Box::new(Expr::integer(1, span)),
                 span,
             }),
             span,
@@ -1881,7 +1623,7 @@ fn utf8_expression(
     }
     let mut terms = terms.into_iter();
     let Some(first) = terms.next() else {
-        return Ok(Expr::Zero { span });
+        return Ok(Expr::integer(0, span));
     };
     let Some(second) = terms.next() else {
         return Ok(first);
@@ -2163,10 +1905,30 @@ pub fn parse(source: &str, source_name: &str) -> Result<Program, LanguageError> 
     })
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one exhaustive expression match keeps spread-context validation auditable"
-)]
+// Only statically known, unshadowed functions admit an early arity check.
+// Chained calls and packs are checked when the runtime binds their arguments.
+fn check_call_arity(
+    callee: &Expr,
+    arguments: &[Expr],
+    span: Option<Span>,
+    names: &BTreeMap<String, bool>,
+    functions: &BTreeMap<String, &Function>,
+    source: &str,
+    out: &mut Vec<Diagnostic>,
+) {
+    if let Expr::Reference { name, .. } = callee
+        && !names.contains_key(name)
+        && let Some(function) = functions.get(name)
+        && !function.variadic
+        && !arguments
+            .iter()
+            .any(|argument| matches!(argument, Expr::Spread { .. }))
+        && arguments.len() > function.parameters.len()
+    {
+        out.push(fail("NSS004", "too many arguments for function", source, span).0);
+    }
+}
+
 fn analyze_expr(
     expr: &Expr,
     names: &BTreeMap<String, bool>,
@@ -2177,6 +1939,7 @@ fn analyze_expr(
 ) {
     match expr {
         Expr::Reference { name, span } => match names.get(name) {
+            None if functions.contains_key(name) => {}
             None => out.push(
                 fail(
                     "NSS002",
@@ -2186,16 +1949,7 @@ fn analyze_expr(
                 )
                 .0,
             ),
-            Some(true) => out.push(
-                fail(
-                    "NSS009",
-                    format!("variadic parameter {name:?} must be spread as {name}..."),
-                    source,
-                    *span,
-                )
-                .0,
-            ),
-            Some(false) => {}
+            Some(_) => {}
         },
         Expr::Spread { name, span } => match names.get(name) {
             Some(true) if spread_allowed => {}
@@ -2219,107 +1973,33 @@ fn analyze_expr(
             ),
         },
         Expr::Call {
-            function,
+            callee,
             arguments,
             span,
         } => {
-            if let Some(definition) = functions.get(function) {
-                let has_spread = arguments
-                    .iter()
-                    .any(|argument| matches!(argument, Expr::Spread { .. }));
-                if !has_spread && !accepts_arity(definition, arguments.len()) {
-                    out.push(
-                        fail(
-                            "NSS004",
-                            format!(
-                                "function {function:?} expects {} arguments, found {}",
-                                expected_arity(definition),
-                                arguments.len()
-                            ),
-                            source,
-                            *span,
-                        )
-                        .0,
-                    );
-                }
-            } else {
-                out.push(
-                    fail(
-                        "NSS003",
-                        format!("unknown function {function:?}"),
-                        source,
-                        *span,
-                    )
-                    .0,
-                );
-            }
-            arguments
-                .iter()
-                .for_each(|item| analyze_expr(item, names, functions, source, out, true));
-        }
-        Expr::Trace { function, span } => {
-            if !functions.contains_key(function) {
-                out.push(
-                    fail(
-                        "NSS003",
-                        format!("unknown function {function:?}"),
-                        source,
-                        *span,
-                    )
-                    .0,
-                );
+            check_call_arity(callee, arguments, *span, names, functions, source, out);
+            analyze_expr(callee, names, functions, source, out, false);
+            for argument in arguments {
+                analyze_expr(argument, names, functions, source, out, true);
             }
         }
-        Expr::Reflect {
-            operation,
-            arguments,
-            span,
-        } => {
-            if !operation.accepts(arguments.len()) {
+        Expr::Reflect { arguments, span } => {
+            if arguments.len() != 3 {
                 out.push(fail("NSR001", "invalid reflection argument count", source, *span).0);
+                return;
             }
-            arguments
-                .iter()
-                .for_each(|item| analyze_expr(item, names, functions, source, out, true));
+            {
+                analyze_expr(&arguments[0], names, functions, source, out, false);
+                if let Err(message) =
+                    crate::value_reflection::Rule::compile(&arguments[1], &arguments[2])
+                {
+                    out.push(fail("NSR002", message, source, *span).0);
+                }
+            }
         }
         Expr::Add { operands, .. } | Expr::Multiply { operands, .. } => operands
             .iter()
             .for_each(|item| analyze_expr(item, names, functions, source, out, true)),
-        Expr::Concat { values, .. } => values
-            .iter()
-            .for_each(|item| analyze_expr(item, names, functions, source, out, true)),
-        Expr::Fold {
-            function,
-            initial,
-            values,
-            span,
-        } => {
-            match functions.get(function) {
-                Some(definition) if !definition.variadic && definition.parameters.len() == 2 => {}
-                Some(_) => out.push(
-                    fail(
-                        "NSS010",
-                        format!("fold function {function:?} must accept exactly two parameters"),
-                        source,
-                        *span,
-                    )
-                    .0,
-                ),
-                None => out.push(
-                    fail(
-                        "NSS003",
-                        format!("unknown function {function:?}"),
-                        source,
-                        *span,
-                    )
-                    .0,
-                ),
-            }
-            analyze_expr(initial, names, functions, source, out, false);
-            values
-                .iter()
-                .for_each(|item| analyze_expr(item, names, functions, source, out, true));
-        }
         Expr::Phase { turns, value, span } => {
             if !is_canonical_phase(*turns) {
                 out.push(
@@ -2334,132 +2014,20 @@ fn analyze_expr(
             }
             analyze_expr(value, names, functions, source, out, false);
         }
-        Expr::Index { value, .. }
-        | Expr::Camera { value, .. }
-        | Expr::Length { value, .. }
-        | Expr::Untrace { value, .. }
-        | Expr::RankDescent { value, .. } => {
+        Expr::IndexCapture { span, .. } => out.push(
+            fail(
+                "NSR002",
+                "INDEX depth captures are only valid in REFLECT templates",
+                source,
+                *span,
+            )
+            .0,
+        ),
+        Expr::Index { value, .. } => {
             analyze_expr(value, names, functions, source, out, false);
         }
-        Expr::Apply { pattern, .. } => {
-            analyze_expr(pattern, names, functions, source, out, false);
-        }
-        _ => {}
+        Expr::Literal { .. } => {}
     }
-}
-
-fn expression_calls<'a>(expr: &'a Expr, calls: &mut Vec<(&'a str, Option<Span>)>) {
-    match expr {
-        Expr::Reflect { arguments, .. } => {
-            arguments
-                .iter()
-                .for_each(|argument| expression_calls(argument, calls));
-        }
-        Expr::Call {
-            function,
-            arguments,
-            span,
-        } => {
-            calls.push((function, *span));
-            arguments
-                .iter()
-                .for_each(|argument| expression_calls(argument, calls));
-        }
-        Expr::Add { operands, .. } | Expr::Multiply { operands, .. } => operands
-            .iter()
-            .for_each(|operand| expression_calls(operand, calls)),
-        Expr::Concat { values, .. } => values
-            .iter()
-            .for_each(|value| expression_calls(value, calls)),
-        Expr::Fold {
-            function,
-            initial,
-            values,
-            span,
-        } => {
-            calls.push((function, *span));
-            expression_calls(initial, calls);
-            values
-                .iter()
-                .for_each(|value| expression_calls(value, calls));
-        }
-        Expr::Phase { value, .. }
-        | Expr::Index { value, .. }
-        | Expr::Camera { value, .. }
-        | Expr::Length { value, .. }
-        | Expr::Untrace { value, .. }
-        | Expr::RankDescent { value, .. } => {
-            expression_calls(value, calls);
-        }
-        Expr::Apply { pattern, .. } => expression_calls(pattern, calls),
-        Expr::Zero { .. }
-        | Expr::One { .. }
-        | Expr::Scalar { .. }
-        | Expr::Reference { .. }
-        | Expr::Spread { .. }
-        | Expr::Trace { .. } => {}
-    }
-}
-
-fn find_function_cycle<'a>(
-    function: &'a str,
-    functions: &BTreeMap<String, &'a Function>,
-    states: &mut BTreeMap<&'a str, u8>,
-    active: &mut Vec<&'a str>,
-) -> Option<(Vec<String>, Option<Span>)> {
-    states.insert(function, 1);
-    active.push(function);
-    let definition = functions.get(function)?;
-    let mut calls = Vec::new();
-    expression_calls(&definition.body, &mut calls);
-    for (called, span) in calls {
-        if !functions.contains_key(called) {
-            continue;
-        }
-        match states.get(called).copied().unwrap_or_default() {
-            0 => {
-                if let Some(cycle) = find_function_cycle(called, functions, states, active) {
-                    return Some(cycle);
-                }
-            }
-            1 => {
-                let start = active.iter().position(|name| *name == called).unwrap_or(0);
-                let cycle = active[start..]
-                    .iter()
-                    .copied()
-                    .chain(std::iter::once(called))
-                    .map(str::to_owned)
-                    .collect();
-                return Some((cycle, span));
-            }
-            _ => {}
-        }
-    }
-    active.pop();
-    states.insert(function, 2);
-    None
-}
-
-fn executed_function_cycle(
-    program: &Program,
-    functions: &BTreeMap<String, &Function>,
-) -> Option<(Vec<String>, Option<Span>)> {
-    let mut states = BTreeMap::new();
-    let mut active = Vec::new();
-    let mut roots = Vec::new();
-    for binding in &program.bindings {
-        expression_calls(&binding.value, &mut roots);
-    }
-    expression_calls(&program.result, &mut roots);
-    for (function, _) in roots {
-        if functions.contains_key(function)
-            && states.get(function).copied().unwrap_or_default() == 0
-            && let Some(cycle) = find_function_cycle(function, functions, &mut states, &mut active)
-        {
-            return Some(cycle);
-        }
-    }
-    None
 }
 
 fn fixed_parameter_count(function: &Function) -> usize {
@@ -2486,10 +2054,6 @@ fn expected_arity(function: &Function) -> String {
 }
 
 #[must_use]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one ordered analysis pass preserves deterministic first-diagnostic behavior"
-)]
 pub fn analyze(program: &Program) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     let mut function_names = BTreeMap::new();
@@ -2553,17 +2117,6 @@ pub fn analyze(program: &Program) -> Vec<Diagnostic> {
             false,
         );
     }
-    if let Some((cycle, span)) = executed_function_cycle(program, &function_names) {
-        out.push(
-            fail(
-                "NSS007",
-                format!("cyclic function call: {}", cycle.join(" -> ")),
-                &program.source_name,
-                span,
-            )
-            .0,
-        );
-    }
     let mut names = BTreeMap::new();
     for binding in &program.bindings {
         analyze_expr(
@@ -2612,52 +2165,15 @@ pub(crate) fn validate(program: &Program) -> Result<(), LanguageError> {
 ///
 /// Returns the first semantic or exact-value diagnostic.
 pub fn interpret(program: &Program) -> Result<NativeState, LanguageError> {
-    interpret_value(program)
+    Ok(interpret_retained(program)?.project().clone())
 }
 
 pub(crate) fn interpret_retained(
     program: &Program,
 ) -> Result<crate::retained::State, LanguageError> {
-    interpret_value(program)
-}
-
-fn interpret_value<S: crate::retained::evaluation::Evaluated>(
-    program: &Program,
-) -> Result<S, LanguageError> {
-    validate(program)?;
-    let functions = program
-        .functions
-        .iter()
-        .map(|function| (function.name.clone(), function))
-        .collect::<BTreeMap<_, _>>();
-    let mut env: BTreeMap<String, ExactBinding<S>> = BTreeMap::new();
-    for binding in &program.bindings {
-        env.insert(
-            binding.name.clone(),
-            ExactBinding::Value(evaluate(
-                &binding.value,
-                &env,
-                &functions,
-                &mut Vec::new(),
-                &program.source_name,
-            )?),
-        );
-    }
-    let result = evaluate(
-        &program.result,
-        &env,
-        &functions,
-        &mut Vec::new(),
-        &program.source_name,
-    )?;
-    let inputs = env
-        .values()
-        .filter_map(|binding| match binding {
-            ExactBinding::Value(value) => Some(value.clone()),
-            ExactBinding::Pack(_) => None,
-        })
-        .collect::<Vec<_>>();
-    Ok(result.retaining(&inputs))
+    crate::strand::execution::Graph::compile(program)?
+        .run()?
+        .state(&program.source_name, program.span)
 }
 
 /// A validated source-defined function callable with exact native states.
@@ -2668,7 +2184,7 @@ fn interpret_value<S: crate::retained::evaluation::Evaluated>(
 #[derive(Debug)]
 pub struct ExactFunction<'a> {
     definition: &'a Function,
-    functions: BTreeMap<String, &'a Function>,
+    function: crate::strand::execution::FunctionValue,
     source_name: &'a str,
 }
 
@@ -2701,7 +2217,11 @@ impl ExactFunction<'_> {
     /// Returns `NSE002` for the wrong argument count or the first ordinary
     /// language diagnostic raised while evaluating the function body.
     pub fn apply(&self, arguments: &[NativeState]) -> Result<NativeState, LanguageError> {
-        self.apply_value(arguments)
+        let retained = arguments
+            .iter()
+            .map(crate::retained::State::from_projection)
+            .collect::<Vec<_>>();
+        Ok(self.apply_retained(&retained)?.project().clone())
     }
 
     /// Apply a function without replacing full states with classical camera values.
@@ -2712,13 +2232,6 @@ impl ExactFunction<'_> {
         &self,
         arguments: &[crate::retained::State],
     ) -> Result<crate::retained::State, LanguageError> {
-        self.apply_value(arguments)
-    }
-
-    fn apply_value<S: crate::retained::evaluation::Evaluated>(
-        &self,
-        arguments: &[S],
-    ) -> Result<S, LanguageError> {
         if !accepts_arity(self.definition, arguments.len()) {
             return Err(fail(
                 "NSE002",
@@ -2732,15 +2245,15 @@ impl ExactFunction<'_> {
                 self.definition.span,
             ));
         }
-        let environment = bind_arguments(self.definition, arguments.to_vec());
-        evaluate(
-            &self.definition.body,
-            &environment,
-            &self.functions,
-            &mut vec![self.definition.name.clone()],
-            self.source_name,
-        )
-        .map(|result: S| result.retaining(arguments))
+        self.function
+            .call(
+                arguments
+                    .iter()
+                    .cloned()
+                    .map(crate::strand::execution::Value::State)
+                    .collect(),
+            )?
+            .state(self.source_name, self.definition.span)
     }
 }
 
@@ -2770,44 +2283,23 @@ pub fn exact_function<'a>(
     })?;
     Ok(ExactFunction {
         definition,
-        functions,
+        function: crate::strand::execution::Graph::compile(program)?.function(name)?,
         source_name: &program.source_name,
     })
 }
 
 pub(crate) struct UnaryFunction<'a> {
-    definition: &'a Function,
-    functions: BTreeMap<String, &'a Function>,
-    source_name: &'a str,
+    selected: ExactFunction<'a>,
 }
 
 impl UnaryFunction<'_> {
     pub(crate) fn apply_retained(
         &self,
-        value: crate::retained::State,
+        mut value: crate::retained::State,
         steps: u64,
     ) -> Result<crate::retained::State, LanguageError> {
-        self.apply_value(value, steps)
-    }
-
-    fn apply_value<S: crate::retained::evaluation::Evaluated>(
-        &self,
-        mut value: S,
-        steps: u64,
-    ) -> Result<S, LanguageError> {
-        let parameter = &self.definition.parameters[0];
         for _ in 0..steps {
-            let previous = value;
-            let environment =
-                BTreeMap::from([(parameter.clone(), ExactBinding::Value(previous.clone()))]);
-            value = evaluate(
-                &self.definition.body,
-                &environment,
-                &self.functions,
-                &mut vec![self.definition.name.clone()],
-                self.source_name,
-            )?
-            .retaining(&[previous]);
+            value = self.selected.apply_retained(&[value])?;
         }
         Ok(value)
     }
@@ -2817,20 +2309,18 @@ pub(crate) fn unary_function<'a>(
     program: &'a Program,
     name: &str,
 ) -> Result<UnaryFunction<'a>, LanguageError> {
-    validate(program)?;
-    let functions = program
+    let definition = program
         .functions
         .iter()
-        .map(|function| (function.name.clone(), function))
-        .collect::<BTreeMap<_, _>>();
-    let definition = functions.get(name).copied().ok_or_else(|| {
-        fail(
-            "NSB001",
-            format!("unknown batch function {name:?}"),
-            &program.source_name,
-            program.span,
-        )
-    })?;
+        .find(|function| function.name == name)
+        .ok_or_else(|| {
+            fail(
+                "NSB001",
+                format!("unknown batch function {name:?}"),
+                &program.source_name,
+                program.span,
+            )
+        })?;
     if definition.variadic || definition.parameters.len() != 1 {
         return Err(fail(
             "NSB002",
@@ -2843,9 +2333,7 @@ pub(crate) fn unary_function<'a>(
         ));
     }
     Ok(UnaryFunction {
-        definition,
-        functions,
-        source_name: &program.source_name,
+        selected: exact_function(program, name)?,
     })
 }
 
@@ -2854,11 +2342,17 @@ pub(crate) fn expanded_unary_expression(
     program: &Program,
     name: &str,
 ) -> Result<Expr, LanguageError> {
-    let selected = unary_function(program, name)?;
+    let unary = unary_function(program, name)?;
+    let selected = &unary.selected;
+    let functions = program
+        .functions
+        .iter()
+        .map(|function| (function.name.clone(), function))
+        .collect();
     let parameter = selected.definition.parameters[0].clone();
     expand_expr(
         &selected.definition.body,
-        &selected.functions,
+        &functions,
         &BTreeMap::from([(
             parameter,
             ExprBinding::Value(Expr::Reference {
@@ -2868,412 +2362,6 @@ pub(crate) fn expanded_unary_expression(
         )]),
         &mut vec![selected.definition.name.clone()],
         selected.source_name,
-    )
-}
-
-#[derive(Clone, Debug)]
-enum ExactBinding<S = NativeState> {
-    Value(S),
-    Pack(Vec<S>),
-}
-
-fn bind_arguments<S>(function: &Function, values: Vec<S>) -> BTreeMap<String, ExactBinding<S>> {
-    let fixed = fixed_parameter_count(function);
-    let mut values = values.into_iter();
-    let mut environment = function
-        .parameters
-        .iter()
-        .take(fixed)
-        .cloned()
-        .zip(values.by_ref().take(fixed).map(ExactBinding::Value))
-        .collect::<BTreeMap<_, _>>();
-    if function.variadic {
-        let parameter = function
-            .parameters
-            .last()
-            .expect("validated variadic functions have a pack parameter");
-        environment.insert(parameter.clone(), ExactBinding::Pack(values.collect()));
-    }
-    environment
-}
-
-fn evaluate_list<S: crate::retained::evaluation::Evaluated>(
-    expressions: &[Expr],
-    env: &BTreeMap<String, ExactBinding<S>>,
-    functions: &BTreeMap<String, &Function>,
-    active: &mut Vec<String>,
-    source: &str,
-) -> Result<Vec<S>, LanguageError> {
-    let mut values = Vec::new();
-    for expression in expressions {
-        if let Expr::Spread { name, span } = expression {
-            match env.get(name) {
-                Some(ExactBinding::Pack(pack)) => values.extend(pack.iter().cloned()),
-                _ => {
-                    return Err(fail(
-                        "NSS009",
-                        format!("{name:?} is not an available variadic pack"),
-                        source,
-                        *span,
-                    ));
-                }
-            }
-        } else {
-            values.push(evaluate(expression, env, functions, active, source)?);
-        }
-    }
-    Ok(values)
-}
-
-#[expect(
-    clippy::too_many_lines,
-    reason = "one exhaustive expression match keeps direct denotation auditable"
-)]
-fn evaluate<S: crate::retained::evaluation::Evaluated>(
-    expr: &Expr,
-    env: &BTreeMap<String, ExactBinding<S>>,
-    functions: &BTreeMap<String, &Function>,
-    active: &mut Vec<String>,
-    source: &str,
-) -> Result<S, LanguageError> {
-    let result = match expr {
-        Expr::Reflect {
-            operation,
-            arguments,
-            span,
-        } => {
-            let values = evaluate_list(arguments, env, functions, active, source)?;
-            evaluate_reflection(*operation, &values, source, *span)
-        }
-        Expr::Zero { .. } => Ok(S::zero()),
-        Expr::One { .. } => Ok(S::one()),
-        Expr::Scalar { real, imag, span } => Ok(S::scalar(
-            NativeScalar::from_text(real, imag)
-                .map_err(|message| fail("NST005", message, source, *span))?,
-        )),
-        Expr::Reference { name, span } => match env.get(name) {
-            Some(ExactBinding::Value(value)) => Ok(value.clone()),
-            Some(ExactBinding::Pack(_)) => Err(fail(
-                "NSS009",
-                format!("variadic parameter {name:?} must be spread as {name}..."),
-                source,
-                *span,
-            )),
-            None => Err(fail(
-                "NSS002",
-                format!("unknown reference {name:?}"),
-                source,
-                *span,
-            )),
-        },
-        Expr::Spread { name, span } => Err(fail(
-            "NSS009",
-            format!("variadic parameter {name:?} must occur inside an argument or operand list"),
-            source,
-            *span,
-        )),
-        Expr::Call {
-            function,
-            arguments,
-            span,
-        } => {
-            if active.iter().any(|name| name == function) {
-                let mut cycle = active.clone();
-                cycle.push(function.clone());
-                return Err(fail(
-                    "NSS007",
-                    format!("cyclic function call: {}", cycle.join(" -> ")),
-                    source,
-                    *span,
-                ));
-            }
-            let definition = functions.get(function).ok_or_else(|| {
-                fail(
-                    "NSS003",
-                    format!("unknown function {function:?}"),
-                    source,
-                    *span,
-                )
-            })?;
-            let values = evaluate_list(arguments, env, functions, active, source)?;
-            if !accepts_arity(definition, values.len()) {
-                return Err(fail(
-                    "NSS004",
-                    format!(
-                        "function {function:?} expects {} arguments, found {}",
-                        expected_arity(definition),
-                        values.len()
-                    ),
-                    source,
-                    *span,
-                ));
-            }
-            let local = bind_arguments(definition, values.clone());
-            active.push(function.clone());
-            let result = evaluate(&definition.body, &local, functions, active, source);
-            active.pop();
-            result.map(|result: S| result.retaining(&values))
-        }
-        Expr::Trace { function, span } => {
-            let strand =
-                crate::strand::operation_strand(function, functions, source, source, *span)?;
-            evaluate(&strand, env, functions, active, source)
-        }
-        Expr::Length { value, span } => {
-            let strand = evaluate(value, env, functions, active, source)?;
-            let length = crate::strand::operation_length(strand.project(), source, *span)?;
-            Ok(S::one()
-                .index_power(1, length)
-                .expect("the length camera uses a positive direction")
-                .retaining(&[strand]))
-        }
-        Expr::Untrace { value, rank, span } => {
-            let state = evaluate(value, env, functions, active, source)?;
-            if crate::strand::is_operation_strand(state.project()) {
-                return crate::strand::optimize_operation_strand(
-                    state.project(),
-                    rank,
-                    source,
-                    *span,
-                )?
-                .map_or_else(
-                    || Ok(state.clone()),
-                    |candidate| {
-                        evaluate(&candidate, env, functions, active, source)
-                            .map(|result: S| result.retaining(std::slice::from_ref(&state)))
-                    },
-                );
-            }
-            let pattern = crate::discovery::discover(state.project(), rank, source, *span)?;
-            let expression = pattern.expression(source, *span)?;
-            evaluate(&expression, env, functions, active, source)
-                .map(|result: S| result.retaining(&[state]))
-        }
-        Expr::RankDescent {
-            value,
-            target_rank,
-            minimum_agreement,
-            span,
-        } => {
-            let state = evaluate(value, env, functions, active, source)?;
-            let search = rank_descent_search(
-                state.project(),
-                target_rank.as_deref(),
-                minimum_agreement.as_deref(),
-                source,
-                *span,
-            )?;
-            let expression = search.final_pattern().expression(source, *span)?;
-            evaluate(&expression, env, functions, active, source)
-                .map(|result: S| result.retaining(&[state]))
-        }
-        Expr::Apply {
-            pattern,
-            position,
-            span,
-        } => {
-            let Expr::RankDescent {
-                value,
-                target_rank,
-                minimum_agreement,
-                ..
-            } = pattern.as_ref()
-            else {
-                return Err(fail(
-                    "NSE003",
-                    "apply expects rank_descent(...) as its first argument",
-                    source,
-                    pattern.span(),
-                ));
-            };
-            let state = evaluate(value, env, functions, active, source)?;
-            let search = rank_descent_search(
-                state.project(),
-                target_rank.as_deref(),
-                minimum_agreement.as_deref(),
-                source,
-                *span,
-            )?;
-            crate::rank_descent::replay_at(search.final_pattern(), *position, source)
-                .map_err(|mut error| {
-                    if error.0.span.is_none() {
-                        error.0.span = *span;
-                    }
-                    error
-                })
-                .map(|result| S::lift(&result).retaining(&[state]))
-        }
-        Expr::Concat {
-            direction,
-            values,
-            span,
-        } => {
-            let values = evaluate_list(values, env, functions, active, source)?;
-            if values.is_empty() {
-                return Err(fail(
-                    "NST007",
-                    "concat requires at least one value after pack expansion",
-                    source,
-                    *span,
-                ));
-            }
-            let mut out = S::zero();
-            for (position, value) in values.into_iter().enumerate() {
-                let depth = u64::try_from(position + 1).map_err(|_capacity_error| {
-                    fail(
-                        "NST007",
-                        "concat has too many values to represent as INDEX depth",
-                        source,
-                        *span,
-                    )
-                })?;
-                out = out.add(
-                    &value
-                        .index_power(*direction, depth)
-                        .map_err(|message| fail("NST007", message, source, *span))?,
-                );
-            }
-            Ok(out)
-        }
-        Expr::Fold {
-            function,
-            initial,
-            values,
-            span,
-        } => {
-            let definition = functions.get(function).ok_or_else(|| {
-                fail(
-                    "NSS003",
-                    format!("unknown function {function:?}"),
-                    source,
-                    *span,
-                )
-            })?;
-            if definition.variadic || definition.parameters.len() != 2 {
-                return Err(fail(
-                    "NSS010",
-                    format!("fold function {function:?} must accept exactly two parameters"),
-                    source,
-                    *span,
-                ));
-            }
-            let mut accumulator = evaluate(initial, env, functions, active, source)?;
-            for value in evaluate_list(values, env, functions, active, source)? {
-                let arguments = vec![accumulator, value];
-                let local = bind_arguments(definition, arguments.clone());
-                active.push(function.clone());
-                let result = evaluate(&definition.body, &local, functions, active, source);
-                active.pop();
-                accumulator = result?.retaining(&arguments);
-            }
-            Ok(accumulator)
-        }
-        Expr::Camera {
-            from_direction,
-            to_direction,
-            value,
-            ..
-        } => {
-            Ok(evaluate(value, env, functions, active, source)?
-                .camera(*from_direction, *to_direction))
-        }
-        Expr::Add { operands, .. } => {
-            let mut out = S::zero();
-            for value in evaluate_list(operands, env, functions, active, source)? {
-                out = out.add(&value);
-            }
-            Ok(out)
-        }
-        Expr::Multiply { operands, .. } => {
-            let mut out = S::one();
-            for value in evaluate_list(operands, env, functions, active, source)? {
-                out = out.multiply(&value);
-            }
-            Ok(out)
-        }
-        Expr::Phase { turns, value, .. } => {
-            Ok(evaluate(value, env, functions, active, source)?.phase(*turns))
-        }
-        Expr::Index {
-            direction,
-            multiplicity,
-            value,
-            span,
-        } => evaluate(value, env, functions, active, source)?
-            .index_power(*direction, *multiplicity)
-            .map_err(|message| fail("NST003", message, source, *span)),
-    };
-    result.map(|value| value.at_span(expr.span()))
-}
-
-fn evaluate_reflection<S: crate::retained::evaluation::Evaluated>(
-    operation: crate::reflection::Operation,
-    arguments: &[S],
-    source: &str,
-    span: Option<Span>,
-) -> Result<S, LanguageError> {
-    if !operation.accepts(arguments.len()) {
-        return Err(fail(
-            "NSR001",
-            "invalid reflection argument count",
-            source,
-            span,
-        ));
-    }
-    let result = match operation {
-        crate::reflection::Operation::Rewrite => {
-            let projections = arguments
-                .iter()
-                .map(|state| state.project().clone())
-                .collect::<Vec<_>>();
-            let expr = crate::reflection::rewrite(&projections, source, span)?;
-            evaluate(
-                &expr,
-                &BTreeMap::new(),
-                &BTreeMap::new(),
-                &mut Vec::new(),
-                source,
-            )
-        }
-        crate::reflection::Operation::Apply => {
-            let (functions, root) =
-                crate::reflection::application_graph(arguments[0].project(), source, span)?;
-            let program = Program {
-                functions,
-                bindings: Vec::new(),
-                result: Expr::Trace {
-                    function: root.clone(),
-                    span,
-                },
-                source_name: source.into(),
-                span,
-                goal: Goal::Emit,
-                output_kind: OutputKind::Pattern,
-            };
-            exact_function(&program, &root)?.apply_value(&arguments[1..])
-        }
-    }?;
-    Ok(result.retaining(arguments))
-}
-
-fn rank_descent_search(
-    state: &NativeState,
-    target_rank: Option<&str>,
-    minimum_agreement: Option<&str>,
-    source: &str,
-    span: Option<Span>,
-) -> Result<crate::rank_descent::RankDescent, LanguageError> {
-    let (_first_index, values) = crate::continuation::indexed_observations(state, source, span)?;
-    let strategy = target_rank.map_or_else(crate::rank_descent::RankStrategy::adaptive, |rank| {
-        crate::rank_descent::RankStrategy::static_target(rank, minimum_agreement.unwrap_or("1"))
-    });
-    crate::rank_descent::descend_states(&values, values.len(), &strategy, source).map_err(
-        |mut error| {
-            if error.0.span.is_none() {
-                error.0.span = span;
-            }
-            error
-        },
     )
 }
 
@@ -3308,8 +2396,21 @@ pub(crate) fn expand_functions(program: &Program) -> Result<Program, LanguageErr
         &mut Vec::new(),
         &program.source_name,
     )?;
+    let mut pending = vec![&result];
+    pending.extend(bindings.iter().map(|binding| &binding.value));
+    let mut needs_functions = false;
+    while let Some(expression) = pending.pop() {
+        if matches!(expression, Expr::Reference { name, .. } if functions.contains_key(name)) {
+            needs_functions = true;
+        }
+        pending.extend(crate::reflection::children(expression));
+    }
     let expanded = Program {
-        functions: Vec::new(),
+        functions: if needs_functions {
+            program.functions.clone()
+        } else {
+            Vec::new()
+        },
         bindings,
         goal: program.goal,
         output_kind: program.output_kind,
@@ -3317,22 +2418,39 @@ pub(crate) fn expand_functions(program: &Program) -> Result<Program, LanguageErr
         source_name: program.source_name.clone(),
         span: program.span,
     };
-    lower_reflective_expressions(&expanded)
+    Ok(expanded)
 }
 
 pub(crate) fn expanded_source(program: &Program) -> Result<String, LanguageError> {
     let expanded = expand_functions(program)?;
     let mut lines = expanded
-        .bindings
+        .functions
         .iter()
-        .map(|binding| {
+        .map(|function| {
+            let mut parameters = function.parameters.join(", ");
+            if function.variadic {
+                parameters.push_str("...");
+            }
             format!(
-                "let {} = {}",
-                binding.name,
-                expression_source(&binding.value)
+                "let {} = ({parameters}) => {}",
+                function.name,
+                expression_source(&function.body)
             )
         })
         .collect::<Vec<_>>();
+    lines.extend(
+        expanded
+            .bindings
+            .iter()
+            .map(|binding| {
+                format!(
+                    "let {} = {}",
+                    binding.name,
+                    expression_source(&binding.value)
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
     let result = expression_source(&expanded.result);
     lines.push(match expanded.goal {
         Goal::ProveZero => format!("{result} = 0"),
@@ -3353,69 +2471,26 @@ pub(crate) fn expanded_source(program: &Program) -> Result<String, LanguageError
 
 pub(crate) fn expression_source(expression: &Expr) -> String {
     match expression {
-        Expr::Reflect {
-            operation,
-            arguments,
-            ..
+        Expr::Call {
+            callee, arguments, ..
         } => format!(
+            "({})({})",
+            expression_source(callee),
+            expression_list_source(arguments)
+        ),
+        Expr::Reflect { arguments, .. } => format!(
             "{}({})",
-            operation.name(),
+            "reflect",
             arguments
                 .iter()
                 .map(expression_source)
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        Expr::Zero { .. } => "zero".into(),
-        Expr::One { .. } => "one".into(),
-        Expr::Scalar { real, imag, .. } if imag == "0" => real.clone(),
-        Expr::Scalar { real, imag, .. } => format!("scalar({real}, {imag})"),
+        Expr::Literal { real, imag, .. } if imag == "0" => real.clone(),
+        Expr::Literal { real, imag, .. } => format!("scalar({real}, {imag})"),
         Expr::Reference { name, .. } => name.clone(),
         Expr::Spread { name, .. } => format!("{name}..."),
-        Expr::Call {
-            function,
-            arguments,
-            ..
-        } => format!("{function}({})", expression_list_source(arguments)),
-        Expr::Concat {
-            direction, values, ..
-        } => format!("concat({direction}, {})", expression_list_source(values)),
-        Expr::Fold {
-            function,
-            initial,
-            values,
-            ..
-        } => format!(
-            "fold({function}, {}, {})",
-            expression_source(initial),
-            expression_list_source(values)
-        ),
-        Expr::Camera {
-            from_direction,
-            to_direction,
-            value,
-            ..
-        } => format!(
-            "camera({from_direction}, {to_direction}, {})",
-            expression_source(value)
-        ),
-        Expr::Trace { function, .. } => format!("trace({function})"),
-        Expr::Length { value, .. } => format!("length({})", expression_source(value)),
-        Expr::Untrace { value, rank, .. } if rank == "1" => {
-            format!("untrace({})", expression_source(value))
-        }
-        Expr::Untrace { value, rank, .. } => {
-            format!("untrace({}, {rank})", expression_source(value))
-        }
-        Expr::RankDescent {
-            value,
-            target_rank,
-            minimum_agreement,
-            ..
-        } => rank_descent_source(value, target_rank.as_deref(), minimum_agreement.as_deref()),
-        Expr::Apply {
-            pattern, position, ..
-        } => apply_source(pattern, *position),
         Expr::Add { operands, .. } => format!("add({})", expression_list_source(operands)),
         Expr::Multiply { operands, .. } => {
             format!("multiply({})", expression_list_source(operands))
@@ -3423,6 +2498,12 @@ pub(crate) fn expression_source(expression: &Expr) -> String {
         Expr::Phase { turns, value, .. } => {
             format!("phase({turns}, {})", expression_source(value))
         }
+        Expr::IndexCapture {
+            direction,
+            depth,
+            value,
+            ..
+        } => format!("index({direction}, {}, {depth})", expression_source(value)),
         Expr::Index {
             direction,
             multiplicity,
@@ -3449,26 +2530,6 @@ fn expression_list_source(expressions: &[Expr]) -> String {
         .map(expression_source)
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn rank_descent_source(
-    value: &Expr,
-    target_rank: Option<&str>,
-    minimum_agreement: Option<&str>,
-) -> String {
-    match (target_rank, minimum_agreement) {
-        (None, None) => format!("rank_descent({})", expression_source(value)),
-        (Some(rank), None) => format!("rank_descent({}, {rank})", expression_source(value)),
-        (Some(rank), Some(agreement)) => format!(
-            "rank_descent({}, {rank}, {agreement})",
-            expression_source(value)
-        ),
-        (None, Some(_)) => unreachable!("agreement is parsed only after a target rank"),
-    }
-}
-
-fn apply_source(pattern: &Expr, position: u64) -> String {
-    format!("apply({}, {position})", expression_source(pattern))
 }
 
 #[derive(Clone, Debug)]
@@ -3527,10 +2588,49 @@ fn expand_list(
     Ok(expanded)
 }
 
-fn fold_expression(additive: bool, mut values: Vec<Expr>, span: Option<Span>) -> Expr {
+// Pack positions are one-based INDEX directions, shared by expansion and execution.
+pub(crate) fn pack_direction(
+    position: usize,
+    source: &str,
+    span: Option<Span>,
+) -> Result<u64, LanguageError> {
+    u64::try_from(position)
+        .ok()
+        .and_then(|position| position.checked_add(1))
+        .ok_or_else(|| {
+            fail(
+                "NSS009",
+                "pack position exceeds INDEX direction capacity",
+                source,
+                span,
+            )
+        })
+}
+
+fn indexed_pack_expression(
+    values: &[Expr],
+    source: &str,
+    span: Option<Span>,
+) -> Result<Expr, LanguageError> {
+    let operands = values
+        .iter()
+        .enumerate()
+        .map(|(position, value)| {
+            Ok(Expr::Index {
+                direction: pack_direction(position, source, span)?,
+                multiplicity: 1,
+                value: Box::new(value.clone()),
+                span,
+            })
+        })
+        .collect::<Result<_, LanguageError>>()?;
+    Ok(combine_operands(true, operands, span))
+}
+
+fn combine_operands(additive: bool, mut values: Vec<Expr>, span: Option<Span>) -> Expr {
     match values.len() {
-        0 if additive => Expr::Zero { span },
-        0 => Expr::One { span },
+        0 if additive => Expr::integer(0, span),
+        0 => Expr::integer(1, span),
         1 => values.remove(0),
         _ if additive => Expr::Add {
             operands: values,
@@ -3543,47 +2643,6 @@ fn fold_expression(additive: bool, mut values: Vec<Expr>, span: Option<Span>) ->
     }
 }
 
-fn concat_expression(
-    direction: u64,
-    values: Vec<Expr>,
-    span: Option<Span>,
-    source: &str,
-) -> Result<Expr, LanguageError> {
-    if values.is_empty() {
-        return Err(fail(
-            "NST007",
-            "concat requires at least one value after pack expansion",
-            source,
-            span,
-        ));
-    }
-    let indexed = values
-        .into_iter()
-        .enumerate()
-        .map(|(position, value)| {
-            let multiplicity = u64::try_from(position + 1).map_err(|_capacity_error| {
-                fail(
-                    "NST007",
-                    "concat has too many values to represent as INDEX depth",
-                    source,
-                    span,
-                )
-            })?;
-            Ok(Expr::Index {
-                direction,
-                multiplicity,
-                value: Box::new(value),
-                span,
-            })
-        })
-        .collect::<Result<Vec<_>, LanguageError>>()?;
-    Ok(fold_expression(true, indexed, span))
-}
-
-#[expect(
-    clippy::too_many_lines,
-    reason = "one exhaustive expression match keeps source elaboration auditable"
-)]
 fn expand_expr(
     expr: &Expr,
     functions: &BTreeMap<String, &Function>,
@@ -3592,24 +2651,59 @@ fn expand_expr(
     source: &str,
 ) -> Result<Expr, LanguageError> {
     match expr {
-        Expr::Reflect {
-            operation,
+        Expr::Call {
+            callee,
             arguments,
             span,
-        } => Ok(Expr::Reflect {
-            operation: *operation,
-            arguments: expand_list(arguments, functions, parameters, active, source)?,
-            span: *span,
-        }),
+        } => {
+            let callee = expand_expr(callee, functions, parameters, active, source)?;
+            let arguments = expand_list(arguments, functions, parameters, active, source)?;
+            if let Expr::Reference { name, .. } = &callee {
+                if let Some(definition) = functions
+                    .get(name)
+                    .filter(|f| accepts_arity(f, arguments.len()))
+                {
+                    if active.contains(name) {
+                        return Err(fail(
+                            "NSS007",
+                            "recursive graph cannot be finitely expanded",
+                            source,
+                            *span,
+                        ));
+                    }
+                    let local = bind_expressions(definition, arguments);
+                    active.push(name.clone());
+                    let result = expand_expr(&definition.body, functions, &local, active, source);
+                    active.pop();
+                    return result;
+                }
+            }
+            Ok(Expr::Call {
+                callee: Box::new(callee),
+                arguments,
+                span: *span,
+            })
+        }
+        Expr::Reflect { arguments, span } => {
+            let arguments = if arguments.len() == 3 {
+                // Pattern captures are lexical binders, not surrounding parameters.
+                vec![
+                    expand_expr(&arguments[0], functions, parameters, active, source)?,
+                    arguments[1].clone(),
+                    arguments[2].clone(),
+                ]
+            } else {
+                expand_list(arguments, functions, parameters, active, source)?
+            };
+            Ok(Expr::Reflect {
+                arguments,
+                span: *span,
+            })
+        }
         Expr::Reference { name, span } if parameters.contains_key(name) => {
             match &parameters[name] {
                 ExprBinding::Value(value) => Ok(value.clone()),
-                ExprBinding::Pack(_) => Err(fail(
-                    "NSS009",
-                    format!("variadic parameter {name:?} must be spread as {name}..."),
-                    source,
-                    *span,
-                )),
+                ExprBinding::Pack(values) => indexed_pack_expression(values, source, *span),
             }
         }
         Expr::Spread { name, span } => Err(fail(
@@ -3618,139 +2712,12 @@ fn expand_expr(
             source,
             *span,
         )),
-        Expr::Call {
-            function,
-            arguments,
-            span,
-        } => {
-            if active.iter().any(|name| name == function) {
-                let mut cycle = active.clone();
-                cycle.push(function.clone());
-                return Err(fail(
-                    "NSS007",
-                    format!("cyclic function call: {}", cycle.join(" -> ")),
-                    source,
-                    *span,
-                ));
-            }
-            let definition = functions.get(function).ok_or_else(|| {
-                fail(
-                    "NSS003",
-                    format!("unknown function {function:?}"),
-                    source,
-                    *span,
-                )
-            })?;
-            let arguments = expand_list(arguments, functions, parameters, active, source)?;
-            if !accepts_arity(definition, arguments.len()) {
-                return Err(fail(
-                    "NSS004",
-                    format!(
-                        "function {function:?} expects {} arguments, found {}",
-                        expected_arity(definition),
-                        arguments.len()
-                    ),
-                    source,
-                    *span,
-                ));
-            }
-            let local = bind_expressions(definition, arguments);
-            active.push(function.clone());
-            let result = expand_expr(&definition.body, functions, &local, active, source);
-            active.pop();
-            result
-        }
-        Expr::Trace { function, span } => {
-            crate::strand::operation_strand(function, functions, source, source, *span)
-        }
-        Expr::Length { value, span } => Ok(Expr::Length {
-            value: Box::new(expand_expr(value, functions, parameters, active, source)?),
-            span: *span,
-        }),
-        Expr::Untrace { value, rank, span } => Ok(Expr::Untrace {
-            value: Box::new(expand_expr(value, functions, parameters, active, source)?),
-            rank: rank.clone(),
-            span: *span,
-        }),
-        Expr::RankDescent {
-            value,
-            target_rank,
-            minimum_agreement,
-            span,
-        } => Ok(Expr::RankDescent {
-            value: Box::new(expand_expr(value, functions, parameters, active, source)?),
-            target_rank: target_rank.clone(),
-            minimum_agreement: minimum_agreement.clone(),
-            span: *span,
-        }),
-        Expr::Apply {
-            pattern,
-            position,
-            span,
-        } => Ok(Expr::Apply {
-            pattern: Box::new(expand_expr(pattern, functions, parameters, active, source)?),
-            position: *position,
-            span: *span,
-        }),
-        Expr::Concat {
-            direction,
-            values,
-            span,
-        } => concat_expression(
-            *direction,
-            expand_list(values, functions, parameters, active, source)?,
-            *span,
-            source,
-        ),
-        Expr::Fold {
-            function,
-            initial,
-            values,
-            span,
-        } => {
-            let definition = functions.get(function).ok_or_else(|| {
-                fail(
-                    "NSS003",
-                    format!("unknown function {function:?}"),
-                    source,
-                    *span,
-                )
-            })?;
-            if definition.variadic || definition.parameters.len() != 2 {
-                return Err(fail(
-                    "NSS010",
-                    format!("fold function {function:?} must accept exactly two parameters"),
-                    source,
-                    *span,
-                ));
-            }
-            let mut accumulator = expand_expr(initial, functions, parameters, active, source)?;
-            for value in expand_list(values, functions, parameters, active, source)? {
-                let local = bind_expressions(definition, vec![accumulator, value]);
-                active.push(function.clone());
-                let result = expand_expr(&definition.body, functions, &local, active, source);
-                active.pop();
-                accumulator = result?;
-            }
-            Ok(accumulator)
-        }
-        Expr::Camera {
-            from_direction,
-            to_direction,
-            value,
-            span,
-        } => Ok(Expr::Camera {
-            from_direction: *from_direction,
-            to_direction: *to_direction,
-            value: Box::new(expand_expr(value, functions, parameters, active, source)?),
-            span: *span,
-        }),
-        Expr::Add { operands, span } => Ok(fold_expression(
+        Expr::Add { operands, span } => Ok(combine_operands(
             true,
             expand_list(operands, functions, parameters, active, source)?,
             *span,
         )),
-        Expr::Multiply { operands, span } => Ok(fold_expression(
+        Expr::Multiply { operands, span } => Ok(combine_operands(
             false,
             expand_list(operands, functions, parameters, active, source)?,
             *span,
@@ -3775,236 +2742,15 @@ fn expand_expr(
     }
 }
 
-fn lower_reflective_expressions(program: &Program) -> Result<Program, LanguageError> {
-    let functions = BTreeMap::new();
-    let mut env = BTreeMap::new();
-    let mut bindings = Vec::with_capacity(program.bindings.len());
-    for binding in &program.bindings {
-        let value = lower_reflective_expr(&binding.value, &env, &program.source_name)?;
-        let state = evaluate(
-            &value,
-            &env,
-            &functions,
-            &mut Vec::new(),
-            &program.source_name,
-        )?;
-        env.insert(binding.name.clone(), ExactBinding::Value(state));
-        bindings.push(Binding {
-            name: binding.name.clone(),
-            span: binding.span,
-            value,
-        });
-    }
-    let result = lower_reflective_expr(&program.result, &env, &program.source_name)?;
-    Ok(Program {
-        functions: Vec::new(),
-        bindings,
-        goal: program.goal,
-        output_kind: program.output_kind,
-        result,
-        source_name: program.source_name.clone(),
-        span: program.span,
-    })
-}
-
-fn lower_graph_operation(
-    operation: crate::reflection::Operation,
-    arguments: &[Expr],
-    span: Option<Span>,
-    env: &BTreeMap<String, ExactBinding>,
-    source: &str,
-) -> Result<Expr, LanguageError> {
-    let arguments = arguments
-        .iter()
-        .map(|argument| lower_reflective_expr(argument, env, source))
-        .collect::<Result<Vec<_>, _>>()?;
-    let graph = arguments
-        .first()
-        .ok_or_else(|| fail("NSR001", "reflection requires a graph", source, span))?;
-    let state = evaluate(graph, env, &BTreeMap::new(), &mut Vec::new(), source)?;
-    if operation == crate::reflection::Operation::Apply {
-        let (functions, root) = crate::reflection::application_graph(&state, source, span)?;
-        let catalog = functions.iter().map(|f| (f.name.clone(), f)).collect();
-        let call = Expr::Call {
-            function: root,
-            arguments: arguments[1..].to_vec(),
-            span,
-        };
-        let expanded = expand_expr(&call, &catalog, &BTreeMap::new(), &mut Vec::new(), source)?;
-        lower_reflective_expr(&expanded, env, source)
-    } else {
-        let values = arguments
-            .iter()
-            .map(|argument| evaluate(argument, env, &BTreeMap::new(), &mut Vec::new(), source))
-            .collect::<Result<Vec<_>, _>>()?;
-        crate::reflection::rewrite(&values, source, span)
-    }
-}
-
-#[expect(
-    clippy::too_many_lines,
-    reason = "one exhaustive staging match keeps core lowering behavior auditable"
-)]
-fn lower_reflective_expr(
-    expr: &Expr,
-    env: &BTreeMap<String, ExactBinding>,
-    source: &str,
-) -> Result<Expr, LanguageError> {
-    match expr {
-        Expr::Reflect {
-            operation,
-            arguments,
-            span,
-        } => lower_graph_operation(*operation, arguments, *span, env, source),
-        Expr::Length { value, span } => {
-            let value = lower_reflective_expr(value, env, source)?;
-            let strand = evaluate(&value, env, &BTreeMap::new(), &mut Vec::new(), source)?;
-            let length = crate::strand::operation_length(&strand, source, *span)?;
-            Ok(Expr::Index {
-                direction: 1,
-                multiplicity: length,
-                value: Box::new(Expr::One { span: None }),
-                span: *span,
-            })
-        }
-        Expr::Untrace { value, rank, .. } => {
-            let value = lower_reflective_expr(value, env, source)?;
-            let state = evaluate(&value, env, &BTreeMap::new(), &mut Vec::new(), source)?;
-            if crate::strand::is_operation_strand(&state) {
-                let candidate =
-                    crate::strand::optimize_operation_strand(&state, rank, source, expr.span())?;
-                // Both expressions are already canonical core-operation
-                // strands. Preserving their nested form avoids expanding a
-                // large graph into a recursion-heavy flat state expression.
-                return Ok(candidate.unwrap_or(value));
-            }
-            let pattern = crate::discovery::discover(&state, rank, source, expr.span())?;
-            let expression = pattern.expression(source, expr.span())?;
-            lower_reflective_expr(&expression, env, source)
-        }
-        Expr::RankDescent {
-            value,
-            target_rank,
-            minimum_agreement,
-            ..
-        } => {
-            let value = lower_reflective_expr(value, env, source)?;
-            let state = evaluate(&value, env, &BTreeMap::new(), &mut Vec::new(), source)?;
-            let search = rank_descent_search(
-                &state,
-                target_rank.as_deref(),
-                minimum_agreement.as_deref(),
-                source,
-                expr.span(),
-            )?;
-            let expression = search.final_pattern().expression(source, expr.span())?;
-            lower_reflective_expr(&expression, env, source)
-        }
-        Expr::Apply {
-            pattern, position, ..
-        } => lower_pattern_apply(pattern, *position, env, source, expr.span()),
-        Expr::Add { operands, span } => Ok(Expr::Add {
-            operands: operands
-                .iter()
-                .map(|operand| lower_reflective_expr(operand, env, source))
-                .collect::<Result<Vec<_>, _>>()?,
-            span: *span,
-        }),
-        Expr::Multiply { operands, span } => Ok(Expr::Multiply {
-            operands: operands
-                .iter()
-                .map(|operand| lower_reflective_expr(operand, env, source))
-                .collect::<Result<Vec<_>, _>>()?,
-            span: *span,
-        }),
-        Expr::Phase { turns, value, span } => Ok(Expr::Phase {
-            turns: *turns,
-            value: Box::new(lower_reflective_expr(value, env, source)?),
-            span: *span,
-        }),
-        Expr::Index {
-            direction,
-            multiplicity,
-            value,
-            span,
-        } => Ok(Expr::Index {
-            direction: *direction,
-            multiplicity: *multiplicity,
-            value: Box::new(lower_reflective_expr(value, env, source)?),
-            span: *span,
-        }),
-        Expr::Camera {
-            from_direction,
-            to_direction,
-            value,
-            ..
-        } => {
-            let value = lower_reflective_expr(value, env, source)?;
-            let state = evaluate(&value, env, &BTreeMap::new(), &mut Vec::new(), source)?;
-            Ok(state_expression(
-                &state.camera(*from_direction, *to_direction),
-            ))
-        }
-        Expr::Call { .. }
-        | Expr::Concat { .. }
-        | Expr::Fold { .. }
-        | Expr::Spread { .. }
-        | Expr::Trace { .. } => {
-            unreachable!("calls, packs, concat, fold, and trace are lowered before staging")
-        }
-        _ => Ok(expr.clone()),
-    }
-}
-
-fn lower_pattern_apply(
-    pattern: &Expr,
-    position: u64,
-    env: &BTreeMap<String, ExactBinding>,
-    source: &str,
-    span: Option<Span>,
-) -> Result<Expr, LanguageError> {
-    let Expr::RankDescent {
-        value,
-        target_rank,
-        minimum_agreement,
-        ..
-    } = pattern
-    else {
-        return Err(fail(
-            "NSE003",
-            "apply expects rank_descent(...) as its first argument",
-            source,
-            pattern.span(),
-        ));
-    };
-    let value = lower_reflective_expr(value, env, source)?;
-    let state = evaluate(&value, env, &BTreeMap::new(), &mut Vec::new(), source)?;
-    let search = rank_descent_search(
-        &state,
-        target_rank.as_deref(),
-        minimum_agreement.as_deref(),
-        source,
-        span,
-    )?;
-    let generated = crate::rank_descent::replay_at(search.final_pattern(), position, source)
-        .map_err(|mut error| {
-            if error.0.span.is_none() {
-                error.0.span = span;
-            }
-            error
-        })?;
-    Ok(state_expression(&generated))
-}
-
 pub(crate) fn state_expression(state: &NativeState) -> Expr {
     let mut terms = state
         .0
         .iter()
         .map(|(index, coefficient)| {
             let mut value = if *coefficient == NativeScalar::one() {
-                Expr::One { span: None }
+                Expr::integer(1, None)
             } else {
-                Expr::Scalar {
+                Expr::Literal {
                     real: rational_text(&coefficient.real),
                     imag: rational_text(&coefficient.imag),
                     span: None,
@@ -4027,7 +2773,7 @@ pub(crate) fn state_expression(state: &NativeState) -> Expr {
         })
         .collect::<Vec<_>>();
     match terms.len() {
-        0 => Expr::Zero { span: None },
+        0 => Expr::integer(0, None),
         1 => terms.remove(0),
         _ => Expr::Add {
             operands: terms,
@@ -4171,12 +2917,12 @@ fn optimize_expr(expr: &Expr, events: &mut Vec<RewriteEvent>) -> Expr {
                 event(events, "OPT-ADD-FLATTEN-1", &["L-NS-2"], *span);
             }
             let before = flat.len();
-            flat.retain(|x| !matches!(x, Expr::Zero { .. }));
+            flat.retain(|x| !x.is_integer(0));
             if flat.len() != before {
                 event(events, "OPT-ADD-ZERO-1", &["L-NS-2"], *span);
             }
             match flat.len() {
-                0 => Expr::Zero { span: *span },
+                0 => Expr::integer(0, *span),
                 1 => flat.remove(0),
                 _ => Expr::Add {
                     operands: flat,
@@ -4186,9 +2932,9 @@ fn optimize_expr(expr: &Expr, events: &mut Vec<RewriteEvent>) -> Expr {
         }
         Expr::Multiply { operands, span } => {
             let optimized: Vec<_> = operands.iter().map(|x| optimize_expr(x, events)).collect();
-            if optimized.iter().any(|x| matches!(x, Expr::Zero { .. })) {
+            if optimized.iter().any(|x| x.is_integer(0)) {
                 event(events, "OPT-MUL-ZERO-1", &["L-NS-8"], *span);
-                return Expr::Zero { span: *span };
+                return Expr::integer(0, *span);
             }
             let mut flat = Vec::new();
             let mut flattened = false;
@@ -4204,12 +2950,12 @@ fn optimize_expr(expr: &Expr, events: &mut Vec<RewriteEvent>) -> Expr {
                 event(events, "OPT-MUL-FLATTEN-1", &["L-NS-5"], *span);
             }
             let before = flat.len();
-            flat.retain(|x| !matches!(x, Expr::One { .. }));
+            flat.retain(|x| !x.is_integer(1));
             if flat.len() != before {
                 event(events, "OPT-MUL-ONE-1", &["L-NS-6"], *span);
             }
             match flat.len() {
-                0 => Expr::One { span: *span },
+                0 => Expr::integer(1, *span),
                 1 => flat.remove(0),
                 _ => Expr::Multiply {
                     operands: flat,
@@ -4264,88 +3010,6 @@ fn optimize_expr(expr: &Expr, events: &mut Vec<RewriteEvent>) -> Expr {
             value: Box::new(optimize_expr(value, events)),
             span: *span,
         },
-        Expr::Fold {
-            function,
-            initial,
-            values,
-            span,
-        } => Expr::Fold {
-            function: function.clone(),
-            initial: Box::new(optimize_expr(initial, events)),
-            values: values
-                .iter()
-                .map(|value| optimize_expr(value, events))
-                .collect(),
-            span: *span,
-        },
-        Expr::Camera {
-            from_direction,
-            to_direction,
-            value,
-            span,
-        } => Expr::Camera {
-            from_direction: *from_direction,
-            to_direction: *to_direction,
-            value: Box::new(optimize_expr(value, events)),
-            span: *span,
-        },
-        Expr::Concat {
-            direction,
-            values,
-            span,
-        } => Expr::Concat {
-            direction: *direction,
-            values: values
-                .iter()
-                .map(|value| optimize_expr(value, events))
-                .collect(),
-            span: *span,
-        },
-        Expr::Call {
-            function,
-            arguments,
-            span,
-        } => Expr::Call {
-            function: function.clone(),
-            arguments: arguments
-                .iter()
-                .map(|argument| optimize_expr(argument, events))
-                .collect(),
-            span: *span,
-        },
-        Expr::Trace { function, span } => Expr::Trace {
-            function: function.clone(),
-            span: *span,
-        },
-        Expr::Length { value, span } => Expr::Length {
-            value: Box::new(optimize_expr(value, events)),
-            span: *span,
-        },
-        Expr::Untrace { value, rank, span } => Expr::Untrace {
-            value: Box::new(optimize_expr(value, events)),
-            rank: rank.clone(),
-            span: *span,
-        },
-        Expr::RankDescent {
-            value,
-            target_rank,
-            minimum_agreement,
-            span,
-        } => Expr::RankDescent {
-            value: Box::new(optimize_expr(value, events)),
-            target_rank: target_rank.clone(),
-            minimum_agreement: minimum_agreement.clone(),
-            span: *span,
-        },
-        Expr::Apply {
-            pattern,
-            position,
-            span,
-        } => Expr::Apply {
-            pattern: Box::new(optimize_expr(pattern, events)),
-            position: *position,
-            span: *span,
-        },
         _ => expr.clone(),
     }
 }
@@ -4353,6 +3017,19 @@ fn optimize_expr(expr: &Expr, events: &mut Vec<RewriteEvent>) -> Expr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn function_values_use_shared_graph_call_semantics() {
+        let program = parse(
+            "let f = (a,b) => add(a,b)\nlet p = f(3)\noutput p(4)",
+            "calls.ns",
+        )
+        .unwrap();
+        assert_eq!(
+            interpret(&program).unwrap(),
+            NativeState::scalar(NativeScalar::from_text("7", "0").unwrap())
+        );
+    }
 
     #[test]
     #[should_panic(expected = "phase turns must be from zero through three")]
@@ -4426,21 +3103,17 @@ mod tests {
     }
 
     #[test]
-    fn exact_state_cycles_are_rejected_during_analysis() {
+    fn recursive_graphs_compile_and_execution_is_bounded() {
         let program = parse(
             "let repeat = (value) => repeat(value)\noutput repeat(1)",
             "cycle.ns",
         )
         .unwrap();
-        let diagnostic = analyze(&program)
-            .into_iter()
-            .find(|item| item.code == "NSS007")
-            .expect("cycle diagnostic");
-        assert!(diagnostic.message.contains("repeat -> repeat"));
-        assert_eq!(
-            crate::bytecode::compile(&program).unwrap_err().0.code,
-            "NSS007"
-        );
+        assert!(analyze(&program).is_empty());
+        let artifact = crate::compiled::compile(&program).unwrap();
+        let error = crate::compiled::execute_retained(&artifact).unwrap_err();
+        assert_eq!(error.0.code, "NSG001");
+        assert!(error.0.message.contains("call-depth limit"));
     }
     #[test]
     fn zero_proof_goal_round_trips() {
@@ -4491,14 +3164,7 @@ mod tests {
             "utf8.ns",
         )
         .unwrap();
-        let state = evaluate(
-            &program.bindings[0].value,
-            &BTreeMap::new(),
-            &BTreeMap::new(),
-            &mut Vec::new(),
-            &program.source_name,
-        )
-        .unwrap();
+        let state = interpret(&parse("output \"hé\\nλ\"", "text.ns").unwrap()).unwrap();
         assert_eq!(decode_utf8(&state).unwrap(), "hé\nλ");
         assert!(interpret(&program).unwrap().is_zero());
         let encoded = program_to_data(&program).to_string();
@@ -4518,7 +3184,7 @@ mod tests {
         assert_eq!(proof.goal, Goal::ProveZero);
         assert!(interpret(&proof).unwrap().is_zero());
         assert!(program_to_data(&proof).to_string().contains("call"));
-        let bytecode = crate::bytecode::compile(&proof).unwrap();
+        let bytecode = crate::bytecode::lower(&proof).unwrap();
         assert!(crate::bytecode::execute(&bytecode).unwrap().is_zero());
     }
 
@@ -4583,17 +3249,17 @@ mod tests {
     }
 
     #[test]
-    fn variadic_concat_elaborates_to_exact_indexed_addition() {
-        let source = "let parameters = (head, tail...) => concat(9, head, tail...)\n\
+    fn variadic_add_elaborates_to_exact_addition() {
+        let source = "let parameters = (head, tail...) => add(head, tail...)\n\
                       let forwarded = (values...) => parameters(values...)\n\
-                      let expected = () => add(index(9, 2), index(9, index(9, 3)), index(9, index(9, index(9, 5))))\n\
+                      let expected = () => add(2, 3, 5)\n\
                       add(forwarded(2, 3, 5), phase(2, expected())) = 0";
         let program = parse(source, "variadic.ns").unwrap();
 
         assert!(program.functions[0].variadic);
         assert!(program.functions[1].variadic);
         assert!(interpret(&program).unwrap().is_zero());
-        let bytecode = crate::bytecode::compile(&program).unwrap();
+        let bytecode = crate::bytecode::lower(&program).unwrap();
         assert!(crate::bytecode::execute(&bytecode).unwrap().is_zero());
         assert!(bytecode.instructions.iter().all(|instruction| {
             matches!(
@@ -4646,7 +3312,7 @@ mod tests {
         assert_eq!(nonfinal.0.code, "NSP054");
 
         let ordinary = parse(
-            "let invalid = (value) => concat(1, value...)\noutput invalid(one)",
+            "let invalid = (value) => add(1, value...)\noutput invalid(one)",
             "ordinary-spread.ns",
         )
         .unwrap();
@@ -4662,18 +3328,18 @@ mod tests {
         assert_eq!(interpret(&misplaced).unwrap_err().0.code, "NSS009");
 
         let empty = parse(
-            "let invalid = (values...) => concat(1, values...)\noutput invalid()",
-            "empty-concat.ns",
+            "let invalid = (values...) => add(values...)\noutput invalid()",
+            "empty-pack.ns",
         )
         .unwrap();
-        assert_eq!(interpret(&empty).unwrap_err().0.code, "NST007");
+        assert!(interpret(&empty).unwrap().is_zero());
     }
 
     #[test]
-    fn concat_uses_ordinary_index_depth_addition_on_an_existing_axis() {
+    fn indexed_addition_combines_existing_axes() {
         let program = parse(
-            "output concat(1, index(1, one), one) as pattern",
-            "concat-existing-axis.ns",
+            "output add(index(1, index(1, one)), index(1, one, 2)) as pattern",
+            "indexed-layout.ns",
         )
         .unwrap();
         let state = interpret(&program).unwrap();
@@ -4685,23 +3351,23 @@ mod tests {
     }
 
     #[test]
-    fn finite_fold_elaborates_to_ordered_binary_calls() {
+    fn variadic_reduction_elaborates_to_addition() {
         let source = "let sum = (left, right) => add(left, right)\n\
-                      let total = (values...) => fold(sum, zero, values...)\n\
+                      let total = (values...) => add(values...)\n\
                       total(1, 2, 3, 4) = 10";
-        let program = parse(source, "fold.ns").unwrap();
+        let program = parse(source, "pack.ns").unwrap();
 
         assert!(interpret(&program).unwrap().is_zero());
         let expanded = expanded_source(&program).unwrap();
         assert!(!expanded.contains("fold("));
-        let expanded_program = parse(&expanded, "expanded-fold.ns").unwrap();
+        let expanded_program = parse(&expanded, "expanded-pack.ns").unwrap();
         assert!(interpret(&expanded_program).unwrap().is_zero());
 
         let host_program = parse(
             "let sum = (left, right) => add(left, right)\n\
-             let total = (values...) => fold(sum, zero, values...)\n\
+             let total = (values...) => add(values...)\n\
              output zero",
-            "host-fold.ns",
+            "host-pack.ns",
         )
         .unwrap();
         let total = exact_function(&host_program, "total").unwrap();
@@ -4719,16 +3385,16 @@ mod tests {
 
     #[test]
     fn camera_selects_unwraps_and_remaps_one_index_direction() {
-        let source = "let selected = camera(7, 9, add(index(7, index(7, 3)), index(8, 5)))\n\
+        let source = "let selected = reflect(add(index(7, index(7, 3)), index(8, 5)), index(7, route_value, route_depth), index(9, route_value, route_depth))\n\
                       selected = index(9, index(9, 3))";
         let program = parse(source, "camera.ns").unwrap();
 
         assert!(interpret(&program).unwrap().is_zero());
-        let bytecode = crate::bytecode::compile(&program).unwrap();
+        let bytecode = crate::bytecode::lower(&program).unwrap();
         assert!(crate::bytecode::execute(&bytecode).unwrap().is_zero());
 
         let unwrap = parse(
-            "camera(7, 0, add(index(7, 2), index(8, 5))) = 2",
+            "reflect(add(index(7, 2), index(8, 5)), index(7, route_value, route_depth), route_value) = 2",
             "camera-unwrap.ns",
         )
         .unwrap();

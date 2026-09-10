@@ -74,20 +74,20 @@ decoder invents missing history. All fixed-width integers are little-endian:
 - Header: eight bytes `NSBATCH\0`, `u16` version 2, `u16` flags 0, `u64` item count.
 - Item: `u16` shape rank (`65535` means no shape), optional `u64` extents,
   then `u64` native-node count. The last node is the root.
-- Node tag `u8`: 0 scalar, 1 ADD, 2 MULTIPLY, 3 PHASE, 4 INDEX, 5 camera read.
+- Node tag `u8`: 0 scalar, 1 ADD, 2 MULTIPLY, 3 PHASE, 4 INDEX, 6 REFLECT. Tag 5 is invalid.
 - Scalar payload: squared magnitude text, `u8` ray presence (0 or 1), and
   real/imaginary ray text when present. Text has a `u32` UTF-8 byte length.
 - PHASE payload: `u8` canonical quarter-turn count. INDEX payload: `u64`
   direction and `u64` depth. ADD/MULTIPLY have no extra payload.
-- Camera payload: `u64` source direction and `u64` destination direction.
-  Reads remain graph nodes rather than being replaced by projected constants.
+- REFLECT payload: length-prefixed UTF-8 JSON for the validated match/rebuild rule.
+  Reflection retains its subject graph rather than replacing it with a constant.
 - Every node ends with its operand edges and then its scope edges: each list
   has a `u64` count followed by `u64` backward node references. Sharing survives.
 
 JSON and binary use one graph validator. Invalid operators, forward edges,
 unreachable nodes, noncanonical exact coordinates, invalid shapes, unsupported
-versions/flags, truncated fields, and trailing bytes are errors. The codec uses
-typed records without JSON parsing; no parsing speedup is claimed.
+versions/flags, truncated fields, and trailing bytes are errors. Arithmetic records use typed fields; reflection rules use validated JSON.
+No parsing speedup is claimed.
 
 Shape validation does not allocate a dense array. Readable output materializes
 at most one million elements; larger shapes use sparse/scalar observations

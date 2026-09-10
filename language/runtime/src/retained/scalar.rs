@@ -108,7 +108,7 @@ impl Scalar {
         }
     }
 
-    pub(super) fn to_data(&self) -> ScalarData {
+    pub(crate) fn to_data(&self) -> ScalarData {
         ScalarData {
             squared_magnitude: rational_text(&self.depth.squared_magnitude),
             direction: self.direction.as_ref().map(|direction| RayData {

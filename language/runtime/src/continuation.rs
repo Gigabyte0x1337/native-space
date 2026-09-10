@@ -681,14 +681,14 @@ pub fn indexed_observations(
             span,
         ));
     }
-    let legacy_scalar_layout = state.0.keys().all(|index| {
+    let compact_scalar_layout = state.0.keys().all(|index| {
         index.0.len() == 1
             && index
                 .0
                 .first_key_value()
                 .is_some_and(|(_, depth)| depth.is_one())
     });
-    if legacy_scalar_layout {
+    if compact_scalar_layout {
         let indexed = state
             .0
             .iter()
@@ -1119,7 +1119,7 @@ fn recurrence_expression(coefficients: &[NativeScalar]) -> Expr {
         })
         .collect::<Vec<_>>();
     match terms.len() {
-        0 => Expr::Zero { span: None },
+        0 => Expr::integer(0, None),
         1 => terms.into_iter().next().expect("one term must exist"),
         _ => Expr::Add {
             operands: terms,
@@ -1137,7 +1137,10 @@ fn continuation_functions(
     let order = coefficients.len();
     let previous = (1..=order).map(previous_name).collect::<Vec<_>>();
     let next_call = Expr::Call {
-        function: NEXT_FUNCTION.into(),
+        callee: Box::new(Expr::Reference {
+            name: NEXT_FUNCTION.into(),
+            span: None,
+        }),
         arguments: previous
             .iter()
             .map(|name| Expr::Reference {
@@ -1153,7 +1156,7 @@ fn continuation_functions(
                 name: POSITION_PARAMETER.into(),
                 span: None,
             },
-            Expr::One { span: None },
+            Expr::integer(1, None),
         ],
         span: None,
     }];
@@ -1171,7 +1174,10 @@ fn continuation_functions(
             .collect(),
         variadic: false,
         body: Expr::Call {
-            function: CONTINUATION_FUNCTION.into(),
+            callee: Box::new(Expr::Reference {
+                name: CONTINUATION_FUNCTION.into(),
+                span: None,
+            }),
             arguments: recursive_arguments,
             span: None,
         },
@@ -1195,7 +1201,10 @@ fn continuation_functions(
             parameters: Vec::new(),
             variadic: false,
             body: Expr::Call {
-                function: CONTINUATION_FUNCTION.into(),
+                callee: Box::new(Expr::Reference {
+                    name: CONTINUATION_FUNCTION.into(),
+                    span: None,
+                }),
                 arguments: start_arguments,
                 span: None,
             },
@@ -1244,7 +1253,7 @@ fn continuation_source(
 let {NEXT_FUNCTION} = ({parameters}) =>\n{}\n\n\
 let {CONTINUATION_FUNCTION} = (position, {parameters}) =>\n{CONTINUATION_FUNCTION}({})\n\n\
 let {START_FUNCTION} = () =>\n{CONTINUATION_FUNCTION}({})\n\n\
-output trace({START_FUNCTION}) as pattern\n",
+output {START_FUNCTION} as pattern\n",
         candidate.order,
         state_source(&candidate.next_value),
         candidate.body_source,
@@ -1299,7 +1308,7 @@ fn state_expression(value: &NativeState) -> Expr {
         })
         .collect::<Vec<_>>();
     match terms.len() {
-        0 => Expr::Zero { span: None },
+        0 => Expr::integer(0, None),
         1 => terms.into_iter().next().expect("one state term must exist"),
         _ => Expr::Add {
             operands: terms,
@@ -1314,11 +1323,11 @@ fn state_source(value: &NativeState) -> String {
 
 fn scalar_expression(value: &NativeScalar) -> Expr {
     if value.is_zero() {
-        Expr::Zero { span: None }
+        Expr::integer(0, None)
     } else if *value == NativeScalar::one() {
-        Expr::One { span: None }
+        Expr::integer(1, None)
     } else {
-        Expr::Scalar {
+        Expr::Literal {
             real: rational_source(&value.real),
             imag: rational_source(&value.imag),
             span: None,
@@ -1327,7 +1336,7 @@ fn scalar_expression(value: &NativeScalar) -> Expr {
 }
 
 fn scalar_integer(value: u64) -> Expr {
-    Expr::Scalar {
+    Expr::Literal {
         real: value.to_string(),
         imag: "0".into(),
         span: None,
@@ -1347,12 +1356,7 @@ fn expression_nodes(expression: &Expr) -> usize {
         Expr::Add { operands, .. } | Expr::Multiply { operands, .. } => {
             1 + operands.iter().map(expression_nodes).sum::<usize>()
         }
-        Expr::Concat { values, .. } => 1 + values.iter().map(expression_nodes).sum::<usize>(),
-        Expr::Call { arguments, .. } => 1 + arguments.iter().map(expression_nodes).sum::<usize>(),
-        Expr::Phase { value, .. }
-        | Expr::Index { value, .. }
-        | Expr::Length { value, .. }
-        | Expr::Untrace { value, .. } => 1 + expression_nodes(value),
+        Expr::Phase { value, .. } | Expr::Index { value, .. } => 1 + expression_nodes(value),
         _ => 1,
     }
 }
@@ -1362,10 +1366,7 @@ fn operation_steps(expression: &Expr) -> usize {
         Expr::Add { operands, .. } | Expr::Multiply { operands, .. } => {
             1 + operands.iter().map(operation_steps).sum::<usize>()
         }
-        Expr::Concat { values, .. } => values.iter().map(operation_steps).sum(),
         Expr::Phase { value, .. } | Expr::Index { value, .. } => 1 + operation_steps(value),
-        Expr::Call { arguments, .. } => arguments.iter().map(operation_steps).sum(),
-        Expr::Length { value, .. } | Expr::Untrace { value, .. } => operation_steps(value),
         _ => 0,
     }
 }

@@ -55,6 +55,9 @@ impl Complex {
 }
 
 impl Coefficient for Complex {
+    fn is_zero(&self) -> bool {
+        self.is_zero()
+    }
     fn scalar(data: &ScalarData) -> Result<Self, String> {
         let scalar = Scalar::from_data(data)?;
         let value = scalar.project();

@@ -37,7 +37,7 @@ subset, detects overflow, and rejects unsupported coordinates and operations.
 
 The GPU calculates classical observations. The host constructs the native
 operation graphs for those same steps and retains inputs and scopes for
-feedback. Primitive graph construction is lazy; explicit staged camera reads
+feedback. Primitive graph construction is lazy; explicit staged reflection routing
 remain host work. This is not a GPU-resident native graph or a claim of faster
 execution. `GpuBatchResult.results` contains device observations and `states`
 contains the retained states; batch JSON exposes both separately.

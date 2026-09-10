@@ -8,46 +8,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
-
 use crate::core::{
     self, Diagnostic, Expr, Function, Goal, LanguageError, NativeState, OutputKind, Program, Span,
 };
 use crate::strand::{self, DecodedStrand};
-
-/// A staged operation on an explicit program representation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Operation {
-    /// Apply an explicit source-defined structural rewrite rule.
-    Rewrite,
-    /// Execute a validated graph with supplied arguments.
-    Apply,
-}
-
-impl Operation {
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::Rewrite => "rewrite",
-            Self::Apply => "apply",
-        }
-    }
-
-    pub(crate) fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "rewrite" => Some(Self::Rewrite),
-            "apply" => Some(Self::Apply),
-            _ => None,
-        }
-    }
-
-    pub(crate) const fn accepts(self, count: usize) -> bool {
-        match self {
-            Self::Rewrite => count == 3,
-            Self::Apply => count >= 1,
-        }
-    }
-}
 
 // Finite guardrails bound matching work and native recursion stack usage.
 // They are implementation limits, not claims about mathematical patterns.
@@ -70,8 +34,8 @@ fn program(graph: &DecodedStrand, source: &str, span: Option<Span>) -> Program {
         bindings: Vec::new(),
         goal: Goal::Emit,
         output_kind: OutputKind::Pattern,
-        result: Expr::Trace {
-            function: graph.root.clone(),
+        result: Expr::Reference {
+            name: graph.root.clone(),
             span,
         },
         source_name: source.into(),
@@ -84,7 +48,11 @@ fn decode(
     source: &str,
     span: Option<Span>,
 ) -> Result<DecodedStrand, LanguageError> {
-    if strand::operation_length(state, source, span)? > MAX_NODES as u64 {
+    let selected = strand::execution::FunctionValue::source_graph(
+        &crate::retained::State::from_projection(state),
+        source,
+    )?;
+    if strand::operation_length(selected.project(), source, span)? > MAX_NODES as u64 {
         return Err(error(
             "reflection graph exceeds the coordinate limit",
             source,
@@ -135,49 +103,11 @@ fn root(graph: &DecodedStrand) -> &Function {
         .expect("decoded and validated strands contain their root")
 }
 
-/// Reconstruct an executable graph without changing its parameters.
+/// Rewrite an unbound Native function graph using two explicit source rules.
 ///
-/// Nested graph application is rejected so it cannot reset cycle detection.
-pub(crate) fn application_graph(
-    state: &NativeState,
-    source: &str,
-    span: Option<Span>,
-) -> Result<(Vec<Function>, String), LanguageError> {
-    let graph = decode(state, source, span)?;
-    let mut pending = graph.functions.iter().map(|f| &f.body).collect::<Vec<_>>();
-    while let Some(expr) = pending.pop() {
-        if matches!(
-            expr,
-            Expr::Reflect {
-                operation: Operation::Apply,
-                ..
-            }
-        ) {
-            return Err(error(
-                "applied graphs cannot contain nested graph application",
-                source,
-                span,
-            ));
-        }
-        pending.extend(children(expr));
-    }
-    // A call root, rather than a trace root, activates the existing cycle check.
-    let mut checked = program(&graph, source, span);
-    let definition = root(&graph);
-    checked.result = Expr::Call {
-        function: graph.root.clone(),
-        arguments: definition
-            .parameters
-            .iter()
-            .map(|_| Expr::Zero { span })
-            .collect(),
-        span,
-    };
-    core::validate(&checked)?;
-    Ok((graph.functions, graph.root))
-}
-
-pub(crate) fn rewrite(
+/// # Errors
+/// Rejects malformed or bound graphs, invalid rules, name collisions and work-limit exhaustion.
+pub fn rewrite(
     arguments: &[NativeState],
     source: &str,
     span: Option<Span>,
@@ -233,9 +163,7 @@ pub(crate) fn rewrite(
     for rule in [&pattern, &replacement] {
         let mut pending = rule.functions.iter().map(|f| &f.body).collect::<Vec<_>>();
         while let Some(expr) = pending.pop() {
-            if matches!(expr, Expr::Call { function, .. } | Expr::Trace { function, .. } |
-                Expr::Fold { function, .. } if function == &rule.root)
-            {
+            if matches!(expr, Expr::Reference { name, .. } if name == &rule.root) {
                 return Err(error(
                     "rewrite rule roots cannot reference themselves",
                     source,
@@ -432,90 +360,57 @@ fn header(expr: &Expr) -> Expr {
     let mut result = expr.clone();
     *span_mut(&mut result) = None;
     for child in children_mut(&mut result) {
-        *child = Expr::Zero { span: None };
+        *child = Expr::integer(0, None);
     }
     result
 }
 
 fn span_mut(expr: &mut Expr) -> &mut Option<Span> {
     match expr {
-        Expr::Zero { span }
-        | Expr::One { span }
-        | Expr::Scalar { span, .. }
+        Expr::Call { span, .. }
+        | Expr::Literal { span, .. }
         | Expr::Reference { span, .. }
         | Expr::Spread { span, .. }
-        | Expr::Call { span, .. }
-        | Expr::Concat { span, .. }
-        | Expr::Fold { span, .. }
-        | Expr::Camera { span, .. }
-        | Expr::Trace { span, .. }
-        | Expr::Length { span, .. }
-        | Expr::Untrace { span, .. }
-        | Expr::RankDescent { span, .. }
-        | Expr::Apply { span, .. }
         | Expr::Reflect { span, .. }
         | Expr::Add { span, .. }
         | Expr::Multiply { span, .. }
         | Expr::Phase { span, .. }
+        | Expr::IndexCapture { span, .. }
         | Expr::Index { span, .. } => span,
     }
 }
 
-fn children(expr: &Expr) -> Vec<&Expr> {
+pub(crate) fn children(expr: &Expr) -> Vec<&Expr> {
     match expr {
-        Expr::Call { arguments, .. } | Expr::Reflect { arguments, .. } => {
-            arguments.iter().collect()
-        }
-        Expr::Add { operands, .. } | Expr::Multiply { operands, .. } => operands.iter().collect(),
-        Expr::Concat { values, .. } => values.iter().collect(),
-        Expr::Fold {
-            initial, values, ..
-        } => std::iter::once(initial.as_ref())
-            .chain(values.iter())
+        Expr::Call {
+            callee, arguments, ..
+        } => std::iter::once(callee.as_ref())
+            .chain(arguments.iter())
             .collect(),
-        Expr::Camera { value, .. }
-        | Expr::Length { value, .. }
-        | Expr::Untrace { value, .. }
-        | Expr::RankDescent { value, .. }
-        | Expr::Phase { value, .. }
-        | Expr::Index { value, .. } => vec![value],
-        Expr::Apply { pattern, .. } => vec![pattern],
-        Expr::Zero { .. }
-        | Expr::One { .. }
-        | Expr::Scalar { .. }
-        | Expr::Reference { .. }
-        | Expr::Spread { .. }
-        | Expr::Trace { .. } => Vec::new(),
+        Expr::Reflect { arguments, .. } => arguments.iter().collect(),
+        Expr::Add { operands, .. } | Expr::Multiply { operands, .. } => operands.iter().collect(),
+        Expr::Literal { .. } | Expr::Reference { .. } | Expr::Spread { .. } => Vec::new(),
+        Expr::Phase { value, .. }
+        | Expr::Index { value, .. }
+        | Expr::IndexCapture { value, .. } => vec![value],
     }
 }
 
 fn children_mut(expr: &mut Expr) -> Vec<&mut Expr> {
     match expr {
-        Expr::Call { arguments, .. } | Expr::Reflect { arguments, .. } => {
-            arguments.iter_mut().collect()
-        }
+        Expr::Call {
+            callee, arguments, ..
+        } => std::iter::once(callee.as_mut())
+            .chain(arguments.iter_mut())
+            .collect(),
+        Expr::Reflect { arguments, .. } => arguments.iter_mut().collect(),
         Expr::Add { operands, .. } | Expr::Multiply { operands, .. } => {
             operands.iter_mut().collect()
         }
-        Expr::Concat { values, .. } => values.iter_mut().collect(),
-        Expr::Fold {
-            initial, values, ..
-        } => std::iter::once(initial.as_mut())
-            .chain(values.iter_mut())
-            .collect(),
-        Expr::Camera { value, .. }
-        | Expr::Length { value, .. }
-        | Expr::Untrace { value, .. }
-        | Expr::RankDescent { value, .. }
-        | Expr::Phase { value, .. }
-        | Expr::Index { value, .. } => vec![value],
-        Expr::Apply { pattern, .. } => vec![pattern],
-        Expr::Zero { .. }
-        | Expr::One { .. }
-        | Expr::Scalar { .. }
-        | Expr::Reference { .. }
-        | Expr::Spread { .. }
-        | Expr::Trace { .. } => Vec::new(),
+        Expr::Literal { .. } | Expr::Reference { .. } | Expr::Spread { .. } => Vec::new(),
+        Expr::Phase { value, .. }
+        | Expr::Index { value, .. }
+        | Expr::IndexCapture { value, .. } => vec![value],
     }
 }
 
@@ -526,11 +421,10 @@ mod tests {
     #[test]
     fn indirect_rule_root_reference_cannot_capture_a_target_function() {
         let target = traced(
-            "let to = (x) => add(x, 500)\nlet f = (x) => add(multiply(x, one), to(x))\noutput trace(f)",
+            "let to = (x) => add(x, 500)\nlet f = (x) => add(multiply(x, one), to(x))\noutput f",
         );
-        let pattern = traced("let from = (x) => multiply(x, one)\noutput trace(from)");
-        let replacement =
-            traced("let to = (x) => helper(x)\nlet helper = (x) => to(x)\noutput trace(to)");
+        let pattern = traced("let from = (x) => multiply(x, one)\noutput from");
+        let replacement = traced("let to = (x) => helper(x)\nlet helper = (x) => to(x)\noutput to");
         let failure = rewrite(&[target, pattern, replacement], "capture.ns", None).unwrap_err();
         assert!(failure.0.message.contains("reference themselves"));
     }
@@ -541,24 +435,22 @@ mod tests {
 
     #[test]
     fn conflicting_helper_definitions_cannot_change_callee_meaning() {
-        let target =
-            traced("let shared = (x) => add(x, 1)\nlet f = (x) => shared(x)\noutput trace(f)");
-        let pattern = traced(
-            "let shared = (x) => add(x, 2)\nlet from = (x) => shared(x)\noutput trace(from)",
-        );
-        let replacement = traced("let to = (x) => x\noutput trace(to)");
+        let target = traced("let shared = (x) => add(x, 1)\nlet f = (x) => shared(x)\noutput f");
+        let pattern =
+            traced("let shared = (x) => add(x, 2)\nlet from = (x) => shared(x)\noutput from");
+        let replacement = traced("let to = (x) => x\noutput to");
         let failure = rewrite(&[target, pattern, replacement], "collision.ns", None).unwrap_err();
         assert!(failure.0.message.contains("conflicting reflection helper"));
     }
 
     #[test]
     fn malformed_graphs_and_budget_exhaustion_return_diagnostics() {
-        let mut graph = traced("let f = (x) => x\noutput trace(f)");
+        let mut graph = traced("let f = (x) => x\noutput f");
         graph.0.values_mut().next().unwrap().real = core::rational("1/2").unwrap();
         let failure = decode(&graph, "malformed.ns", None).unwrap_err();
         assert!(!failure.0.message.is_empty());
 
-        let mut expression = Expr::One { span: None };
+        let mut expression = Expr::integer(1, None);
         let pattern = Expr::Reference {
             name: "x".into(),
             span: None,
@@ -569,7 +461,7 @@ mod tests {
 
     #[test]
     fn oversized_replacement_depth_is_rejected_before_another_pass() {
-        let mut expression = Expr::One { span: None };
+        let mut expression = Expr::integer(1, None);
         for _ in 0..=MAX_DEPTH {
             expression = Expr::Phase {
                 turns: 1,

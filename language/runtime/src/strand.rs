@@ -10,6 +10,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+pub mod execution;
+
 use num_bigint::BigUint;
 use num_traits::{One as _, ToPrimitive as _, Zero as _};
 
@@ -45,26 +47,19 @@ const TRACE_START: u64 = 1;
 const FUNCTION_START: u64 = 2;
 const FUNCTION_END: u64 = 3;
 const PARAMETER: u64 = 4;
-const ZERO: u64 = 5;
-const ONE: u64 = 6;
-const SCALAR: u64 = 7;
+const LITERAL: u64 = 7;
 const REFERENCE: u64 = 8;
-const CALL: u64 = 9;
 const ADD: u64 = 10;
 const MULTIPLY: u64 = 11;
 const PHASE: u64 = 12;
 const INDEX: u64 = 13;
-const TRACE: u64 = 14;
-const UNTRACE: u64 = 15;
-const LENGTH: u64 = 16;
 const SPREAD: u64 = 17;
-const CONCAT: u64 = 18;
-const FOLD: u64 = 19;
-const CAMERA: u64 = 20;
-const RANK_DESCENT: u64 = 21;
-const APPLY: u64 = 22;
 // Staged reflection expressions retain their source identity in traces.
 const REFLECT: u64 = 23;
+// Template binder syntax, not another executable Native operation.
+const INDEX_CAPTURE: u64 = 24;
+// Postfix function-value calls preserve their callee as an explicit edge.
+const CALL: u64 = 25;
 
 /// Maximum expression nesting decoded from one operation strand.
 ///
@@ -109,12 +104,21 @@ pub(crate) fn operation_length(
     if !is_operation_strand(state) {
         return Err(malformed());
     }
+    coordinate_length(state, source_name, span)
+}
+
+fn coordinate_length(
+    state: &NativeState,
+    source_name: &str,
+    span: Option<Span>,
+) -> Result<u64, LanguageError> {
+    let malformed = || malformed_strand(source_name, span);
 
     let mut positions = BTreeSet::<BigUint>::new();
     for index in state.0.keys() {
         if index.depth(HEAD_DIRECTION) != BigUint::from(1_u8)
             || index.0.keys().any(|direction| {
-                *direction < TRACE_DIRECTION_START || *direction > TEXT_POSITION_DIRECTION
+                *direction < TRACE_DIRECTION_START || *direction > NUMBER_C_DIRECTION
             })
         {
             return Err(malformed());
@@ -180,7 +184,7 @@ impl Coordinate {
     }
 }
 
-/// Build the nested native strand returned by `trace(function)`.
+/// Build the nested native strand returned by `function`.
 ///
 /// The root function and every transitively referenced source function are
 /// encoded once. Calls remain explicit edges, so direct and mutual recursion
@@ -244,7 +248,7 @@ fn operation_coordinates(
 ///
 /// Returns a located diagnostic for a malformed strand, a non-unit rank, or an
 /// invalid reconstructed function graph.
-pub(crate) fn optimize_operation_strand(
+pub fn optimize_operation_strand(
     state: &NativeState,
     rank: &str,
     source_name: &str,
@@ -267,15 +271,19 @@ pub(crate) fn optimize_operation_strand(
         ));
     }
 
-    let original_length = operation_length(state, source_name, span)?;
+    let selected = execution::FunctionValue::source_graph(
+        &crate::retained::State::from_projection(state),
+        source_name,
+    )?;
+    let original_length = operation_length(selected.project(), source_name, span)?;
     let decoded = decode_operation_strand(state, source_name, span)?;
     let program = Program {
         functions: decoded.functions,
         bindings: Vec::new(),
         goal: Goal::Emit,
         output_kind: OutputKind::Pattern,
-        result: Expr::Trace {
-            function: decoded.root.clone(),
+        result: Expr::Reference {
+            name: decoded.root.clone(),
             span,
         },
         source_name: source_name.into(),
@@ -323,6 +331,7 @@ pub(crate) struct DecodedStrand {
 #[derive(Debug, Default)]
 struct RawCoordinate {
     kind: Option<u64>,
+    opcode: Option<NativeScalar>,
     name: BTreeMap<u64, u8>,
     source: BTreeMap<u64, u8>,
     text_a: BTreeMap<u64, u8>,
@@ -364,7 +373,20 @@ pub(crate) fn decode_operation_strand(
     source_name: &str,
     span: Option<Span>,
 ) -> Result<DecodedStrand, LanguageError> {
-    let length = operation_length(state, source_name, span)?;
+    let selected = execution::FunctionValue::source_graph(
+        &crate::retained::State::from_projection(state),
+        source_name,
+    )?;
+    let coordinates = decode_coordinates(selected.project(), source_name, span)?;
+    decode_coordinate_sequence(&coordinates, source_name, span)
+}
+
+fn decode_coordinates(
+    state: &NativeState,
+    source_name: &str,
+    span: Option<Span>,
+) -> Result<Vec<Coordinate>, LanguageError> {
+    let length = coordinate_length(state, source_name, span)?;
     let length =
         usize::try_from(length).map_err(|_capacity_error| malformed_strand(source_name, span))?;
     let mut raw = (0..length)
@@ -377,7 +399,7 @@ pub(crate) fn decode_operation_strand(
         .into_iter()
         .map(|coordinate| finish_coordinate(coordinate, source_name, span))
         .collect::<Result<Vec<_>, _>>()?;
-    decode_coordinate_sequence(&coordinates, source_name, span)
+    Ok(coordinates)
 }
 
 #[expect(
@@ -418,11 +440,12 @@ fn decode_coordinate_term(
                 )?;
             }
             OPCODE_DIRECTION => {
-                // The opcode phase is redundant with the exact kind and
-                // is validated by reconstruction rather than used as control.
-                if coefficient.is_zero() {
-                    return Err(malformed());
-                }
+                set_once(
+                    &mut coordinate.opcode,
+                    coefficient.clone(),
+                    source_name,
+                    span,
+                )?;
             }
             NUMBER_A_DIRECTION => {
                 set_once(
@@ -565,6 +588,19 @@ fn finish_coordinate(
     source_name: &str,
     span: Option<Span>,
 ) -> Result<Coordinate, LanguageError> {
+    let kind = raw
+        .kind
+        .ok_or_else(|| malformed_strand(source_name, span))?;
+    let opcode_turn = match kind {
+        ADD => Some(0),
+        MULTIPLY => Some(1),
+        PHASE => Some(2),
+        INDEX | INDEX_CAPTURE => Some(3),
+        _ => None,
+    };
+    if raw.opcode != opcode_turn.map(|turns| NativeScalar::one().phase(turns)) {
+        return Err(malformed_strand(source_name, span));
+    }
     let positions = [
         raw.start_line,
         raw.start_column,
@@ -590,10 +626,8 @@ fn finish_coordinate(
         return Err(malformed_strand(source_name, span));
     };
     Ok(Coordinate {
-        kind: raw
-            .kind
-            .ok_or_else(|| malformed_strand(source_name, span))?,
-        opcode_turn: None,
+        kind,
+        opcode_turn,
         name: finish_text(raw.name, source_name, span)?,
         source: finish_text(raw.source, source_name, span)?,
         text_a: finish_text(raw.text_a, source_name, span)?,
@@ -699,10 +733,6 @@ fn decode_function(
     })
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one exhaustive instruction match keeps strand reconstruction auditable"
-)]
 fn decode_expression(
     coordinates: &[Coordinate],
     cursor: &mut usize,
@@ -727,13 +757,15 @@ fn decode_expression(
             .collect::<Result<Vec<_>, _>>()
     };
     let expression = match coordinate.kind {
-        ZERO => Expr::Zero {
+        CALL => Expr::Call {
+            callee: Box::new(child(cursor)?),
+            arguments: children(
+                usize_or_zero(coordinate.number_a.as_deref(), source_name, span)?,
+                cursor,
+            )?,
             span: coordinate.span,
         },
-        ONE => Expr::One {
-            span: coordinate.span,
-        },
-        SCALAR => Expr::Scalar {
+        LITERAL => Expr::Literal {
             real: required_text(coordinate.text_a.as_deref(), source_name, span)?.to_owned(),
             imag: required_text(coordinate.text_b.as_deref(), source_name, span)?.to_owned(),
             span: coordinate.span,
@@ -746,94 +778,23 @@ fn decode_expression(
             name: required_text(coordinate.name.as_deref(), source_name, span)?.to_owned(),
             span: coordinate.span,
         },
-        TRACE => Expr::Trace {
-            function: required_text(coordinate.text_a.as_deref(), source_name, span)?.to_owned(),
-            span: coordinate.span,
-        },
-        LENGTH => Expr::Length {
-            value: Box::new(child(cursor)?),
-            span: coordinate.span,
-        },
-        UNTRACE => Expr::Untrace {
-            value: Box::new(child(cursor)?),
-            rank: coordinate.number_b.clone().unwrap_or_else(|| "0".into()),
-            span: coordinate.span,
-        },
-        RANK_DESCENT => {
-            let argument_count = u64_or_zero(coordinate.number_a.as_deref(), source_name, span)?;
-            let (target_rank, minimum_agreement) = match argument_count {
-                1 => (None, None),
-                2 => (
-                    Some(coordinate.number_b.clone().unwrap_or_else(|| "0".into())),
-                    None,
-                ),
-                3 => (
-                    Some(coordinate.number_b.clone().unwrap_or_else(|| "0".into())),
-                    Some(coordinate.number_c.clone().unwrap_or_else(|| "0".into())),
-                ),
-                _ => return Err(malformed_strand(source_name, span)),
-            };
-            Expr::RankDescent {
-                value: Box::new(child(cursor)?),
-                target_rank,
-                minimum_agreement,
-                span: coordinate.span,
-            }
-        }
         REFLECT => {
             let name = required_text(coordinate.name.as_deref(), source_name, span)?;
-            let operation = crate::reflection::Operation::from_name(name)
-                .ok_or_else(|| malformed_strand(source_name, span))?;
+            if name != "reflect" {
+                return Err(malformed_strand(source_name, span));
+            }
             let arguments = children(
                 usize_or_zero(coordinate.number_a.as_deref(), source_name, span)?,
                 cursor,
             )?;
-            if !operation.accepts(arguments.len()) {
+            if arguments.len() != 3 {
                 return Err(malformed_strand(source_name, span));
             }
             Expr::Reflect {
-                operation,
                 arguments,
                 span: coordinate.span,
             }
         }
-        APPLY => Expr::Apply {
-            pattern: Box::new(child(cursor)?),
-            position: required_u64(coordinate.number_a.as_deref(), source_name, span)?,
-            span: coordinate.span,
-        },
-        CALL => Expr::Call {
-            function: required_text(coordinate.name.as_deref(), source_name, span)?.to_owned(),
-            arguments: children(
-                usize_or_zero(coordinate.number_a.as_deref(), source_name, span)?,
-                cursor,
-            )?,
-            span: coordinate.span,
-        },
-        CONCAT => Expr::Concat {
-            direction: required_u64(coordinate.number_a.as_deref(), source_name, span)?,
-            values: children(
-                usize_or_zero(coordinate.number_b.as_deref(), source_name, span)?,
-                cursor,
-            )?,
-            span: coordinate.span,
-        },
-        FOLD => {
-            let value_count = usize_or_zero(coordinate.number_a.as_deref(), source_name, span)?;
-            let initial = child(cursor)?;
-            Expr::Fold {
-                function: required_text(coordinate.name.as_deref(), source_name, span)?.to_owned(),
-                initial: Box::new(initial),
-                values: children(value_count, cursor)?,
-                span: coordinate.span,
-            }
-        }
-        CAMERA => Expr::Camera {
-            from_direction: required_u64(coordinate.number_a.as_deref(), source_name, span)?,
-            to_direction: u64_or_zero(coordinate.number_b.as_deref(), source_name, span)?,
-            value: Box::new(child(cursor)?),
-            span: coordinate.span,
-        },
         ADD => Expr::Add {
             operands: children(
                 usize_or_zero(coordinate.number_a.as_deref(), source_name, span)?,
@@ -859,6 +820,12 @@ fn decode_expression(
                 span: coordinate.span,
             }
         }
+        INDEX_CAPTURE => Expr::IndexCapture {
+            direction: required_u64(coordinate.number_a.as_deref(), source_name, span)?,
+            depth: required_text(coordinate.name.as_deref(), source_name, span)?.to_owned(),
+            value: Box::new(child(cursor)?),
+            span: coordinate.span,
+        },
         INDEX => Expr::Index {
             direction: required_u64(coordinate.number_a.as_deref(), source_name, span)?,
             multiplicity: required_u64(coordinate.number_b.as_deref(), source_name, span)?,
@@ -913,18 +880,6 @@ fn i64_or_zero(
     })
 }
 
-fn u64_or_zero(
-    value: Option<&str>,
-    source_name: &str,
-    span: Option<Span>,
-) -> Result<u64, LanguageError> {
-    value.map_or(Ok(0), |value| {
-        value
-            .parse()
-            .map_err(|_parse_error| malformed_strand(source_name, span))
-    })
-}
-
 fn usize_or_zero(
     value: Option<&str>,
     source_name: &str,
@@ -970,13 +925,30 @@ fn collect_function(
     }
 
     let mut called = Vec::new();
-    collect_expression(&function.body, coordinates, &mut called);
+    collect_expression(&function.body, coordinates);
+    let mut pending = vec![&function.body];
+    while let Some(expression) = pending.pop() {
+        if let Expr::Reference { name, span } = expression
+            && functions.contains_key(name)
+            && !function.parameters.contains(name)
+        {
+            called.push((name.clone(), *span));
+        }
+        if let Expr::Reflect { arguments, .. } = expression {
+            pending.extend(arguments.first());
+        } else {
+            pending.extend(crate::reflection::children(expression).into_iter().rev());
+        }
+    }
 
     let mut end = Coordinate::new(FUNCTION_END, function.span);
     end.name = Some(function.name.clone());
     coordinates.push(end);
 
     for (called_name, span) in called {
+        if function.parameters.contains(&called_name) {
+            continue;
+        }
         collect_function(
             &called_name,
             functions,
@@ -989,20 +961,23 @@ fn collect_function(
     Ok(())
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one exhaustive expression match keeps the trace schema auditable"
-)]
-fn collect_expression(
-    expression: &Expr,
-    coordinates: &mut Vec<Coordinate>,
-    called: &mut Vec<(String, Option<Span>)>,
-) {
+fn collect_expression(expression: &Expr, coordinates: &mut Vec<Coordinate>) {
     match expression {
-        Expr::Zero { span } => coordinates.push(Coordinate::new(ZERO, *span)),
-        Expr::One { span } => coordinates.push(Coordinate::new(ONE, *span)),
-        Expr::Scalar { real, imag, span } => {
-            let mut coordinate = Coordinate::new(SCALAR, *span);
+        Expr::Call {
+            callee,
+            arguments,
+            span,
+        } => {
+            let mut coordinate = Coordinate::new(CALL, *span);
+            coordinate.number_a = Some(arguments.len().to_string());
+            coordinates.push(coordinate);
+            collect_expression(callee, coordinates);
+            for argument in arguments {
+                collect_expression(argument, coordinates);
+            }
+        }
+        Expr::Literal { real, imag, span } => {
+            let mut coordinate = Coordinate::new(LITERAL, *span);
             coordinate.text_a = Some(real.clone());
             coordinate.text_b = Some(imag.clone());
             coordinates.push(coordinate);
@@ -1017,123 +992,14 @@ fn collect_expression(
             coordinate.name = Some(name.clone());
             coordinates.push(coordinate);
         }
-        Expr::Trace { function, span } => {
-            let mut coordinate = Coordinate::new(TRACE, *span);
-            coordinate.text_a = Some(function.clone());
-            coordinates.push(coordinate);
-            called.push((function.clone(), *span));
-        }
-        Expr::Length { value, span } => {
-            let mut coordinate = Coordinate::new(LENGTH, *span);
-            coordinate.number_a = Some("1".into());
-            coordinates.push(coordinate);
-            collect_expression(value, coordinates, called);
-        }
-        Expr::Untrace { value, rank, span } => {
-            let mut coordinate = Coordinate::new(UNTRACE, *span);
-            coordinate.number_a = Some("2".into());
-            coordinate.number_b = Some(rank.clone());
-            coordinates.push(coordinate);
-            collect_expression(value, coordinates, called);
-        }
-        Expr::RankDescent {
-            value,
-            target_rank,
-            minimum_agreement,
-            span,
-        } => {
-            let mut coordinate = Coordinate::new(RANK_DESCENT, *span);
-            coordinate.number_a = Some(
-                match (target_rank, minimum_agreement) {
-                    (None, None) => "1",
-                    (Some(_), None) => "2",
-                    (Some(_), Some(_)) => "3",
-                    (None, Some(_)) => unreachable!("agreement requires a target rank"),
-                }
-                .into(),
-            );
-            coordinate.number_b.clone_from(target_rank);
-            coordinate.number_c.clone_from(minimum_agreement);
-            coordinates.push(coordinate);
-            collect_expression(value, coordinates, called);
-        }
-        Expr::Reflect {
-            operation,
-            arguments,
-            span,
-        } => {
+        Expr::Reflect { arguments, span } => {
             let mut coordinate = Coordinate::new(REFLECT, *span);
-            coordinate.name = Some(operation.name().into());
+            coordinate.name = Some("reflect".into());
             coordinate.number_a = Some(arguments.len().to_string());
             coordinates.push(coordinate);
             for argument in arguments {
-                collect_expression(argument, coordinates, called);
+                collect_expression(argument, coordinates);
             }
-        }
-        Expr::Apply {
-            pattern,
-            position,
-            span,
-        } => {
-            let mut coordinate = Coordinate::new(APPLY, *span);
-            coordinate.number_a = Some(position.to_string());
-            coordinates.push(coordinate);
-            collect_expression(pattern, coordinates, called);
-        }
-        Expr::Call {
-            function,
-            arguments,
-            span,
-        } => {
-            let mut coordinate = Coordinate::new(CALL, *span);
-            coordinate.name = Some(function.clone());
-            coordinate.number_a = Some(arguments.len().to_string());
-            coordinates.push(coordinate);
-            for argument in arguments {
-                collect_expression(argument, coordinates, called);
-            }
-            called.push((function.clone(), *span));
-        }
-        Expr::Concat {
-            direction,
-            values,
-            span,
-        } => {
-            let mut coordinate = Coordinate::new(CONCAT, *span);
-            coordinate.number_a = Some(direction.to_string());
-            coordinate.number_b = Some(values.len().to_string());
-            coordinates.push(coordinate);
-            for value in values {
-                collect_expression(value, coordinates, called);
-            }
-        }
-        Expr::Fold {
-            function,
-            initial,
-            values,
-            span,
-        } => {
-            let mut coordinate = Coordinate::new(FOLD, *span);
-            coordinate.name = Some(function.clone());
-            coordinate.number_a = Some(values.len().to_string());
-            coordinates.push(coordinate);
-            collect_expression(initial, coordinates, called);
-            for value in values {
-                collect_expression(value, coordinates, called);
-            }
-            called.push((function.clone(), *span));
-        }
-        Expr::Camera {
-            from_direction,
-            to_direction,
-            value,
-            span,
-        } => {
-            let mut coordinate = Coordinate::new(CAMERA, *span);
-            coordinate.number_a = Some(from_direction.to_string());
-            coordinate.number_b = Some(to_direction.to_string());
-            coordinates.push(coordinate);
-            collect_expression(value, coordinates, called);
         }
         Expr::Add { operands, span } => {
             let mut coordinate = Coordinate::new(ADD, *span);
@@ -1141,7 +1007,7 @@ fn collect_expression(
             coordinate.number_a = Some(operands.len().to_string());
             coordinates.push(coordinate);
             for operand in operands {
-                collect_expression(operand, coordinates, called);
+                collect_expression(operand, coordinates);
             }
         }
         Expr::Multiply { operands, span } => {
@@ -1150,7 +1016,7 @@ fn collect_expression(
             coordinate.number_a = Some(operands.len().to_string());
             coordinates.push(coordinate);
             for operand in operands {
-                collect_expression(operand, coordinates, called);
+                collect_expression(operand, coordinates);
             }
         }
         Expr::Phase { turns, value, span } => {
@@ -1158,7 +1024,20 @@ fn collect_expression(
             coordinate.opcode_turn = Some(2);
             coordinate.number_a = Some(turns.to_string());
             coordinates.push(coordinate);
-            collect_expression(value, coordinates, called);
+            collect_expression(value, coordinates);
+        }
+        Expr::IndexCapture {
+            direction,
+            depth,
+            value,
+            span,
+        } => {
+            let mut coordinate = Coordinate::new(INDEX_CAPTURE, *span);
+            coordinate.opcode_turn = Some(3);
+            coordinate.number_a = Some(direction.to_string());
+            coordinate.name = Some(depth.clone());
+            coordinates.push(coordinate);
+            collect_expression(value, coordinates);
         }
         Expr::Index {
             direction,
@@ -1171,7 +1050,7 @@ fn collect_expression(
             coordinate.number_a = Some(direction.to_string());
             coordinate.number_b = Some(multiplicity.to_string());
             coordinates.push(coordinate);
-            collect_expression(value, coordinates, called);
+            collect_expression(value, coordinates);
         }
     }
 }
@@ -1205,7 +1084,7 @@ fn coordinate_expression(coordinate: Coordinate) -> Expr {
             OPCODE_DIRECTION,
             Expr::Phase {
                 turns,
-                value: Box::new(Expr::One { span: None }),
+                value: Box::new(Expr::integer(1, None)),
                 span: None,
             },
         ));
@@ -1264,7 +1143,7 @@ fn number(value: &impl ToString) -> Expr {
 }
 
 fn scalar(real: String) -> Expr {
-    Expr::Scalar {
+    Expr::Literal {
         real,
         imag: "0".into(),
         span: None,
@@ -1273,7 +1152,7 @@ fn scalar(real: String) -> Expr {
 
 fn sum(mut expressions: Vec<Expr>) -> Expr {
     match expressions.len() {
-        0 => Expr::Zero { span: None },
+        0 => Expr::integer(0, None),
         1 => expressions.remove(0),
         _ => Expr::Add {
             operands: expressions,
@@ -1286,386 +1165,162 @@ fn sum(mut expressions: Vec<Expr>) -> Expr {
 mod tests {
     use super::*;
     use crate::core::{interpret, parse};
+    use crate::retained::State;
+    use execution::Value;
 
+    fn graph(body: &str) -> NativeState {
+        interpret(&parse(body, "graph.ns").unwrap()).unwrap()
+    }
+    fn evaluate(expression: Expr) -> NativeState {
+        interpret(&Program {
+            functions: vec![],
+            bindings: vec![],
+            result: expression,
+            goal: Goal::Emit,
+            output_kind: OutputKind::Pattern,
+            source_name: "tool.ns".into(),
+            span: None,
+        })
+        .unwrap()
+    }
+    fn call(state: &NativeState, value: i64) -> NativeState {
+        Value::State(State::from_projection(state))
+            .call(vec![Value::State(State::scalar(
+                NativeScalar::from_text(&value.to_string(), "0").unwrap(),
+            ))])
+            .unwrap()
+            .native()
+            .unwrap()
+            .project()
+            .clone()
+    }
     #[test]
-    fn strand_decoder_rejects_noncanonical_phase() {
+    fn program_state_preserves_distinct_operations_and_indexed_records() {
+        let a = graph("let f = (x) => add(x, phase(1,x))\noutput f");
+        let b = graph("let f = (x) => multiply(x, phase(1,x))\noutput f");
+        assert_ne!(a, b);
+        assert!(
+            a.0.keys()
+                .any(|i| i.depth(CONTINUATION_DIRECTION) > BigUint::from(0_u8))
+        );
+        assert!(graph("let f = (x) => phase(1,x)\nf = f").is_zero());
+    }
+    #[test]
+    fn compiled_function_data_preserves_source_before_optimization() {
+        let program = parse("let f = (x) => add(0,x)\noutput f", "source.ns").unwrap();
+        assert_eq!(
+            interpret(&program).unwrap(),
+            crate::bytecode::execute(&crate::bytecode::lower(&program).unwrap()).unwrap()
+        );
+    }
+    #[test]
+    fn host_optimizer_shortens_exact_graph_and_preserves_results() {
+        let original = graph("let f = (x) => add(add(x,0),multiply(x,1))\noutput f");
+        let shorter = evaluate(
+            optimize_operation_strand(&original, "1", "tool.ns", None)
+                .unwrap()
+                .unwrap(),
+        );
+        let selected =
+            execution::FunctionValue::source_graph(&State::from_projection(&original), "tool.ns")
+                .unwrap();
+        assert!(
+            operation_length(&shorter, "tool.ns", None).unwrap()
+                < operation_length(selected.project(), "tool.ns", None).unwrap()
+        );
+        for value in -8..9 {
+            assert_eq!(call(&shorter, value), call(&original, value));
+        }
+        assert!(
+            optimize_operation_strand(&shorter, "1", "tool.ns", None)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            optimize_operation_strand(&original, "1/2", "tool.ns", None)
+                .unwrap_err()
+                .0
+                .code,
+            "NSI002"
+        );
+    }
+    #[test]
+    fn recursive_and_variadic_function_records_round_trip() {
+        for source in [
+            "let f = (x) => add(index(1,x),index(2,f(x)))\noutput f",
+            "let f = (xs...) => add(xs...)\noutput f",
+        ] {
+            let state = graph(source);
+            let decoded = decode_operation_strand(&state, "tool.ns", None).unwrap();
+            let catalog = decoded
+                .functions
+                .iter()
+                .map(|f| (f.name.clone(), f))
+                .collect();
+            let rebuilt = evaluate(
+                operation_strand(
+                    &decoded.root,
+                    &catalog,
+                    &decoded.encoded_source,
+                    "tool.ns",
+                    None,
+                )
+                .unwrap(),
+            );
+            let second = decode_operation_strand(&rebuilt, "tool.ns", None).unwrap();
+            assert_eq!(decoded.functions, second.functions);
+        }
+        let state = graph("let f = (x) => f(x)\noutput f");
+        assert!(
+            Value::State(State::from_projection(&state))
+                .call(vec![Value::State(State::one())])
+                .unwrap_err()
+                .0
+                .message
+                .contains("call-depth limit")
+        );
+    }
+    #[test]
+    fn host_discovery_exports_a_native_program_without_a_language_builtin() {
+        let samples =
+            graph("output add(index(1,1),index(2,1),index(3,2),index(4,3),index(5,5),index(6,8))");
+        let found = crate::discovery::discover(&samples, "1", "tool.ns", None).unwrap();
+        let exported = evaluate(found.expression("tool.ns", None).unwrap());
+        assert!(is_operation_strand(&exported));
+        assert!(
+            !decode_operation_strand(&exported, "tool.ns", None)
+                .unwrap()
+                .functions
+                .is_empty()
+        );
+    }
+    #[test]
+    fn obsolete_records_and_invalid_phase_are_rejected() {
+        for kind in [5, 6, 9, 14, 15, 16, 18, 19, 20, 21, 22] {
+            let mut cursor = 0;
+            decode_expression(
+                &[Coordinate::new(kind, None)],
+                &mut cursor,
+                0,
+                "invalid.ns",
+                None,
+            )
+            .unwrap_err();
+        }
         let mut phase = Coordinate::new(PHASE, None);
         phase.number_a = Some("4".into());
-        let coordinates = [phase, Coordinate::new(ONE, None)];
-        let mut cursor = 0;
-
-        let error = decode_expression(&coordinates, &mut cursor, 0, "strand.ns", None).unwrap_err();
-        assert_eq!(error.0.code, "NSI003");
+        decode_expression(&[phase], &mut 0, 0, "invalid.ns", None).unwrap_err();
+        operation_length(&NativeState::one(), "invalid.ns", None).unwrap_err();
     }
-
     #[test]
-    fn trace_is_a_nested_coordinate_strand_and_preserves_distinct_programs() {
-        let first = parse(
-            "let sample = (x) => add(x, phase(1, x))\noutput trace(sample) as pattern",
-            "first.ns",
-        )
-        .unwrap();
-        let second = parse(
-            "let sample = (x) => multiply(x, phase(1, x))\noutput trace(sample) as pattern",
-            "second.ns",
-        )
-        .unwrap();
-        let first_state = interpret(&first).unwrap();
-        let second_state = interpret(&second).unwrap();
-
-        assert_ne!(first_state, NativeState::zero());
-        assert_ne!(first_state, second_state);
+    fn source_tools_do_not_silently_drop_partial_bindings() {
+        let state = graph("let f = (a,b) => add(a,b)\noutput f(0)");
         assert!(
-            first_state
+            optimize_operation_strand(&state, "1", "tool.ns", None)
+                .unwrap_err()
                 .0
-                .keys()
-                .any(|index| index.depth(CONTINUATION_DIRECTION) > 0_u8.into())
+                .message
+                .contains("unbound")
         );
-    }
-
-    #[test]
-    fn compiled_trace_observes_source_before_optimization() {
-        let program = parse(
-            "let sample = (x) => add(zero, x)\noutput trace(sample) as pattern",
-            "source-before-optimization.ns",
-        )
-        .unwrap();
-        let direct = interpret(&program).unwrap();
-        let bytecode = crate::bytecode::compile(&program).unwrap();
-
-        assert_eq!(crate::bytecode::execute(&bytecode).unwrap(), direct);
-    }
-
-    #[test]
-    fn trace_is_pure_across_distinct_call_locations() {
-        let program = parse(
-            "let sample = (x) => phase(1, x)\ntrace(sample) = trace(sample)",
-            "pure-trace.ns",
-        )
-        .unwrap();
-
-        let direct = interpret(&program).unwrap();
-        let bytecode = crate::bytecode::compile(&program).unwrap();
-        assert!(direct.is_zero());
-        assert_eq!(crate::bytecode::execute(&bytecode).unwrap(), direct);
-    }
-
-    #[test]
-    fn trace_preserves_the_untrace_rank() {
-        let fifth = parse(
-            "let sample = (x) => untrace(x, 1/5)\noutput trace(sample) as pattern",
-            "fifth.ns",
-        )
-        .unwrap();
-        let quarter = parse(
-            "let sample = (x) => untrace(x, 1/4)\noutput trace(sample) as pattern",
-            "quarter.ns",
-        )
-        .unwrap();
-
-        assert_ne!(interpret(&fifth).unwrap(), interpret(&quarter).unwrap());
-    }
-
-    #[test]
-    fn trace_preserves_rank_descent_strategy() {
-        let adaptive = parse(
-            "let sample = (x) => rank_descent(x)\noutput trace(sample) as pattern",
-            "adaptive.ns",
-        )
-        .unwrap();
-        let static_exact = parse(
-            "let sample = (x) => rank_descent(x, 1/4)\noutput trace(sample) as pattern",
-            "static-exact.ns",
-        )
-        .unwrap();
-        let static_lossy = parse(
-            "let sample = (x) => rank_descent(x, 1/4, 99/100)\noutput trace(sample) as pattern",
-            "static-lossy.ns",
-        )
-        .unwrap();
-
-        assert_ne!(
-            interpret(&adaptive).unwrap(),
-            interpret(&static_exact).unwrap()
-        );
-        assert_ne!(
-            interpret(&static_exact).unwrap(),
-            interpret(&static_lossy).unwrap()
-        );
-    }
-
-    #[test]
-    fn trace_preserves_variadic_pack_and_concat_pattern_nodes() {
-        let program = parse(
-            "let parameters = (values...) => concat(9, values...)\n\
-             output trace(parameters) as pattern",
-            "variadic-trace.ns",
-        )
-        .unwrap();
-        let strand = interpret(&program).unwrap();
-        let kinds = strand
-            .0
-            .iter()
-            .filter(|(index, _coefficient)| {
-                index.depth(KIND_DIRECTION) == BigUint::from(1_u8)
-                    && index.0.keys().all(|direction| {
-                        matches!(
-                            *direction,
-                            HEAD_DIRECTION | CONTINUATION_DIRECTION | KIND_DIRECTION
-                        )
-                    })
-            })
-            .map(|(_index, coefficient)| coefficient)
-            .collect::<Vec<_>>();
-
-        assert!(kinds.contains(&&NativeScalar::from_text(&SPREAD.to_string(), "0").unwrap()));
-        assert!(kinds.contains(&&NativeScalar::from_text(&CONCAT.to_string(), "0").unwrap()));
-    }
-
-    #[test]
-    fn trace_preserves_fold_and_camera_pattern_nodes() {
-        let program = parse(
-            "let step = (left, right) => add(left, right)\n\
-             let model = (values...) => camera(7, 0, fold(step, zero, values...))\n\
-             output trace(model) as pattern",
-            "model-trace.ns",
-        )
-        .unwrap();
-        let strand = interpret(&program).unwrap();
-        let kinds = strand
-            .0
-            .iter()
-            .filter(|(index, _coefficient)| {
-                index.depth(KIND_DIRECTION) == BigUint::from(1_u8)
-                    && index.0.keys().all(|direction| {
-                        matches!(
-                            *direction,
-                            HEAD_DIRECTION | CONTINUATION_DIRECTION | KIND_DIRECTION
-                        )
-                    })
-            })
-            .map(|(_index, coefficient)| coefficient)
-            .collect::<Vec<_>>();
-
-        assert!(kinds.contains(&&NativeScalar::from_text(&SPREAD.to_string(), "0").unwrap()));
-        assert!(kinds.contains(&&NativeScalar::from_text(&FOLD.to_string(), "0").unwrap()));
-        assert!(kinds.contains(&&NativeScalar::from_text(&CAMERA.to_string(), "0").unwrap()));
-    }
-
-    #[test]
-    fn length_projects_trace_extent_to_native_index_depth() {
-        let measured = parse(
-            "let shorter = (value) => value\noutput length(trace(shorter)) as pattern",
-            "measured-length.ns",
-        )
-        .unwrap();
-        let measured = interpret(&measured).unwrap();
-        let (index, coefficient) = measured.0.iter().next().unwrap();
-
-        assert_eq!(measured.0.len(), 1);
-        assert_eq!(index.depth(1), BigUint::from(5_u8));
-        assert_eq!(coefficient, &NativeScalar::one());
-
-        let source = "let shorter = (value) => value\n\
-                      let longer = (value) => add(value, one)\n\
-                      let saved = () => multiply(index(1, one), index(1, one))\n\
-                      multiply(length(trace(shorter)), saved()) = length(trace(longer))";
-        let program = parse(source, "length.ns").unwrap();
-        let direct = interpret(&program).unwrap();
-        let bytecode = crate::bytecode::compile(&program).unwrap();
-
-        assert!(direct.is_zero());
-        assert_eq!(crate::bytecode::execute(&bytecode).unwrap(), direct);
-    }
-
-    #[test]
-    fn length_rejects_values_without_operation_strand_shape() {
-        let program = parse("output length(one) as pattern", "not-strand.ns").unwrap();
-        let error = interpret(&program).unwrap_err();
-
-        assert_eq!(error.0.code, "NSL001");
-        assert_eq!(error.0.span.unwrap().start_line, 1);
-    }
-
-    #[test]
-    fn untrace_synthesizes_a_recursive_operation_strand() {
-        let program = parse(
-            "output untrace(add(index(1, 1), index(2, 1), index(3, 2), index(4, 3), index(5, 5), index(6, 8))) as pattern",
-            "untrace.ns",
-        )
-        .unwrap();
-        let direct = interpret(&program).unwrap();
-        let bytecode = crate::bytecode::compile(&program).unwrap();
-
-        assert!(is_operation_strand(&direct));
-        assert_eq!(crate::bytecode::execute(&bytecode).unwrap(), direct);
-    }
-
-    #[test]
-    fn untrace_keeps_a_strand_without_rewrite_opportunities() {
-        let program = parse(
-            "output untrace(untrace(add(index(1, 1), index(2, 1), index(3, 2), index(4, 3), index(5, 5)))) as pattern",
-            "double-untrace.ns",
-        )
-        .unwrap();
-        let direct = interpret(&program).unwrap();
-        let bytecode = crate::bytecode::compile(&program).unwrap();
-
-        assert!(is_operation_strand(&direct));
-        assert_eq!(crate::bytecode::execute(&bytecode).unwrap(), direct);
-    }
-
-    #[test]
-    fn untrace_rank_one_rebuilds_a_shorter_exact_instruction_strand() {
-        let original = parse(
-            "let redundant = (value) => add(add(value, zero), multiply(value, one))\n\
-             output trace(redundant) as pattern",
-            "instruction-original.ns",
-        )
-        .unwrap();
-        let optimized = parse(
-            "let redundant = (value) => add(add(value, zero), multiply(value, one))\n\
-             output untrace(trace(redundant), 1) as pattern",
-            "instruction-optimized.ns",
-        )
-        .unwrap();
-        let original_state = interpret(&original).unwrap();
-        let optimized_state = interpret(&optimized).unwrap();
-
-        assert_eq!(operation_length(&original_state, "test", None).unwrap(), 11);
-        assert_eq!(operation_length(&optimized_state, "test", None).unwrap(), 7);
-        assert_eq!(
-            crate::bytecode::execute(&crate::bytecode::compile(&optimized).unwrap()).unwrap(),
-            optimized_state
-        );
-
-        let decoded = decode_operation_strand(&optimized_state, "test", None).unwrap();
-        let reconstructed_call = Program {
-            functions: decoded.functions,
-            bindings: Vec::new(),
-            goal: Goal::Emit,
-            output_kind: OutputKind::Auto,
-            result: Expr::Call {
-                function: decoded.root,
-                arguments: vec![Expr::Scalar {
-                    real: "7".into(),
-                    imag: "0".into(),
-                    span: None,
-                }],
-                span: None,
-            },
-            source_name: "reconstructed-call.ns".into(),
-            span: None,
-        };
-        let original_call = parse(
-            "let redundant = (value) => add(add(value, zero), multiply(value, one))\n\
-             output redundant(7)",
-            "original-call.ns",
-        )
-        .unwrap();
-        assert_eq!(
-            interpret(&reconstructed_call).unwrap(),
-            interpret(&original_call).unwrap()
-        );
-    }
-
-    #[test]
-    fn instruction_untrace_rejects_lossy_ranks() {
-        let program = parse(
-            "let redundant = (value) => add(value, zero)\n\
-             output untrace(trace(redundant), 1/2) as pattern",
-            "lossy-instruction-rank.ns",
-        )
-        .unwrap();
-        let error = interpret(&program).unwrap_err();
-
-        assert_eq!(error.0.code, "NSI002");
-        assert_eq!(error.0.span.unwrap().start_line, 2);
-    }
-
-    #[test]
-    fn instruction_untrace_keeps_an_irreducible_matrix_graph() {
-        let source = "let matrix = (a, b, c, d) => add(index(2, a), index(3, b), index(4, c), index(5, d))\n\
-                      let matrix_multiply = (left, right) => matrix(\n\
-                        multiply(left, right), multiply(left, right),\n\
-                        multiply(left, right), multiply(left, right)\n\
-                      )\n";
-        let original = parse(
-            &format!("{source}output trace(matrix_multiply) as pattern"),
-            "matrix.ns",
-        )
-        .unwrap();
-        let optimized = parse(
-            &format!("{source}output untrace(trace(matrix_multiply), 1) as pattern"),
-            "matrix.ns",
-        )
-        .unwrap();
-
-        assert_eq!(
-            interpret(&optimized).unwrap(),
-            interpret(&original).unwrap()
-        );
-    }
-
-    #[test]
-    fn instruction_untrace_preserves_recursive_output_and_continuation_branches() {
-        let program = parse(
-            "let repeat = (position, value) => add(\
-               index(1, value), \
-               index(2, repeat(index(1, position), value))\
-             )\n\
-             output untrace(trace(repeat), 1) as pattern",
-            "recursive-instruction.ns",
-        )
-        .unwrap();
-        let state = interpret(&program).unwrap();
-        let decoded = decode_operation_strand(&state, "test", None).unwrap();
-        let repeat = decoded
-            .functions
-            .iter()
-            .find(|function| function.name == "repeat")
-            .unwrap();
-        let Expr::Add { operands, .. } = &repeat.body else {
-            panic!("recursive pattern must retain its output and continuation branches");
-        };
-        assert_eq!(operands.len(), 2);
-        assert!(matches!(operands[0], Expr::Index { direction: 1, .. }));
-        let Expr::Index {
-            direction: 2,
-            value,
-            ..
-        } = &operands[1]
-        else {
-            panic!("second branch must retain the continuation coordinate");
-        };
-        let Expr::Call { function, .. } = value.as_ref() else {
-            panic!("continuation coordinate must retain the recursive call edge");
-        };
-        assert_eq!(function, "repeat");
-        assert_eq!(
-            crate::bytecode::execute(&crate::bytecode::compile(&program).unwrap()).unwrap(),
-            state
-        );
-    }
-
-    #[test]
-    fn traced_recursion_is_finite_but_executed_recursion_is_rejected() {
-        let traced = parse(
-            "let repeat = (x) => repeat(phase(1, x))\noutput trace(repeat) as pattern",
-            "traced.ns",
-        )
-        .unwrap();
-        let direct = interpret(&traced).unwrap();
-        let bytecode = crate::bytecode::compile(&traced).unwrap();
-        assert!(!direct.is_zero());
-        assert_eq!(crate::bytecode::execute(&bytecode).unwrap(), direct);
-
-        let executed = parse(
-            "let repeat = (x) => repeat(phase(1, x))\noutput repeat(one)",
-            "executed.ns",
-        )
-        .unwrap();
-        let error = interpret(&executed).unwrap_err();
-        assert_eq!(error.0.code, "NSS007");
     }
 }

@@ -353,11 +353,11 @@ impl DiscoveredPattern {
         }
     }
 
-    pub(crate) fn expression(
-        &self,
-        source_name: &str,
-        span: Option<Span>,
-    ) -> Result<Expr, LanguageError> {
+    /// Export the discovered pattern as ordinary Native source structure.
+    ///
+    /// # Errors
+    /// Returns a diagnostic if the pattern cannot be represented.
+    pub fn expression(&self, source_name: &str, span: Option<Span>) -> Result<Expr, LanguageError> {
         match self {
             Self::Deterministic(pattern) => pattern.strand_expression(source_name, span),
             Self::Relationships(pattern) => Ok(state_expression(pattern.state())),

@@ -540,9 +540,9 @@ fn view_file(file: &str, turns: i64, index_direction: u64, numeric: Numeric) -> 
         let Document::State(program) = document else {
             return Err("view expects an executable state document".into());
         };
-        let artifact = native_space_language::bytecode::compile(&program)
+        let artifact = native_space_language::compiled::compile(&program)
             .map_err(|error| error.to_string())?;
-        let state = native_space_language::bytecode::execute_retained(&artifact)
+        let state = native_space_language::compiled::execute_retained(&artifact)
             .map_err(|error| error.to_string())?;
         native_space_language::retained::numeric::view(
             &state,
@@ -556,10 +556,10 @@ fn view_file(file: &str, turns: i64, index_direction: u64, numeric: Numeric) -> 
 
 fn run_file(file: &str, numeric: Numeric) -> ExitCode {
     let result = read_document(file).and_then(|document| match document {
-        Document::State(program) => native_space_language::bytecode::compile(&program)
+        Document::State(program) => native_space_language::compiled::compile(&program)
             .and_then(|bytecode| {
                 let output_kind = bytecode.output_kind;
-                native_space_language::bytecode::execute_retained(&bytecode)
+                native_space_language::compiled::execute_retained(&bytecode)
                     .map(|state| (state, output_kind))
             })
             .and_then(|(state, output_kind)| {
@@ -617,12 +617,14 @@ fn check_file(file: &str) -> ExitCode {
             let goal = program.goal;
             let direct = native_space_language::retained::interpret(&program)
                 .map_err(|error| error.to_string())?;
-            let bytecode = native_space_language::bytecode::compile(&program)
+            let bytecode = native_space_language::compiled::compile(&program)
                 .map_err(|error| error.to_string())?;
-            let compiled = native_space_language::bytecode::execute_retained(&bytecode)
+            let bytecode =
+                native_space_language::compiled::Artifact::from_data(&bytecode.to_data())?;
+            let compiled = native_space_language::compiled::execute_retained(&bytecode)
                 .map_err(|error| error.to_string())?;
             if !direct.same_structure(&compiled) || !direct.same_projection(&compiled) {
-                return Err("the evaluator and bytecode machine disagree".into());
+                return Err("source execution and the saved Native program disagree".into());
             }
             match goal {
                 native_space_language::core::Goal::Emit => Ok(format!(

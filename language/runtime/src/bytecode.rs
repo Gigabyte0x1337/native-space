@@ -25,8 +25,8 @@ pub enum Opcode {
     Multiply,
     Phase,
     Index,
-    /// Select indexed coordinates at evaluation time, retaining the source graph.
-    Camera,
+    /// Match canonical values with a precompiled replacement.
+    Reflect,
     /// Preserve scope inputs; this is a storage instruction, not an arithmetic primitive.
     Retain,
     Halt,
@@ -35,6 +35,7 @@ pub enum Opcode {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum Operand {
+    Rule(crate::value_reflection::Rule),
     Integer(i64),
     Index {
         direction: u64,
@@ -42,10 +43,6 @@ pub enum Operand {
     },
     Scalar {
         coordinates: crate::retained::ScalarData,
-    },
-    Camera {
-        from: u64,
-        to: u64,
     },
 }
 
@@ -104,7 +101,7 @@ impl BytecodeProgram {
     }
 }
 
-/// Compile a native operation graph, preserving branches and camera read dependencies.
+/// Explicitly execute a document and lower its closed retained state for replay.
 ///
 /// Source functions construct the graph; scalar arithmetic stays behind the
 /// classical camera. Staged discovery may observe values while constructing it;
@@ -116,15 +113,36 @@ impl BytecodeProgram {
 ///
 /// # Panics
 /// Panics only if an internal graph invariant is violated after validation.
-pub fn compile(program: &Program) -> Result<BytecodeProgram, LanguageError> {
+pub fn lower(program: &Program) -> Result<BytecodeProgram, LanguageError> {
     let state = crate::retained::interpret(program)?;
+    lower_state(
+        &state,
+        &program.source_name,
+        program.goal,
+        program.output_kind,
+    )
+}
+
+/// Lower an existing retained result without recompiling or rerunning its program.
+///
+/// # Errors
+/// Returns a slot-capacity diagnostic.
+///
+/// # Panics
+/// Panics only if an internal retained-graph invariant is broken.
+pub fn lower_state(
+    state: &crate::retained::State,
+    source_name: &str,
+    goal: Goal,
+    output_kind: OutputKind,
+) -> Result<BytecodeProgram, LanguageError> {
     let mut compiler = Compiler::default();
     for step in state.plan() {
         let slot = i64::try_from(compiler.slot_names.len()).map_err(|_capacity_error| {
             LanguageError(crate::core::Diagnostic {
                 code: "NSC001".into(),
                 message: "program has too many bindings".into(),
-                source_name: program.source_name.clone(),
+                source_name: source_name.to_owned(),
                 span: step.span,
             })
         })?;
@@ -151,11 +169,9 @@ pub fn compile(program: &Program) -> Result<BytecodeProgram, LanguageError> {
                 Some(Operand::Index { direction, depth }),
                 step.span,
             ),
-            Operation::Camera { from, to } => compiler.emit(
-                Opcode::Camera,
-                Some(Operand::Camera { from, to }),
-                step.span,
-            ),
+            Operation::Reflect { rule } => {
+                compiler.emit(Opcode::Reflect, Some(Operand::Rule(rule)), step.span);
+            }
         }
         if !step.retained.is_empty() {
             for input in &step.retained {
@@ -172,13 +188,13 @@ pub fn compile(program: &Program) -> Result<BytecodeProgram, LanguageError> {
         compiler.slot_names.push(format!("branch_{slot}"));
         compiler.emit(Opcode::Store, Some(Operand::Integer(slot)), step.span);
     }
-    compiler.load(compiler.slot_names.len() - 1, program.result.span());
-    compiler.emit(Opcode::Halt, None, program.result.span());
+    compiler.load(compiler.slot_names.len() - 1, None);
+    compiler.emit(Opcode::Halt, None, None);
     Ok(BytecodeProgram {
         version: BYTECODE_VERSION,
-        source_name: program.source_name.clone(),
-        goal: program.goal,
-        output_kind: program.output_kind,
+        source_name: source_name.to_owned(),
+        goal,
+        output_kind,
         slot_names: compiler.slot_names,
         instructions: compiler.instructions,
     })
@@ -397,15 +413,17 @@ pub fn execute_retained(
                     })?,
                 );
             }
-            Opcode::Camera => {
-                let Operand::Camera { from, to } = required_operand(instruction, program)? else {
+            Opcode::Reflect => {
+                let Operand::Rule(rule) = required_operand(instruction, program)? else {
                     return Err(vm_error(
-                        "NSV010",
-                        "CAMERA requires source and destination directions",
+                        "NSV011",
+                        "REFLECT requires a compiled rule",
                         program,
                         instruction.span,
                     ));
                 };
+                rule.validate()
+                    .map_err(|message| vm_error("NSV011", &message, program, instruction.span))?;
                 let value = stack.pop().ok_or_else(|| {
                     vm_error(
                         "NSV001",
@@ -414,7 +432,7 @@ pub fn execute_retained(
                         instruction.span,
                     )
                 })?;
-                stack.push(value.camera(*from, *to));
+                stack.push(value.reflect(rule));
             }
             Opcode::Halt => {
                 if stack.len() != 1 {
@@ -511,7 +529,7 @@ mod tests {
     fn vm_is_independent_and_round_trips() {
         let source = "let x = index(2, scalar(3/2, 0))\noutput add(x, phase(2, x))";
         let ast = parse(source, "vm.ns").unwrap();
-        let bytecode = compile(&ast).unwrap();
+        let bytecode = lower(&ast).unwrap();
         assert_eq!(execute(&bytecode).unwrap(), interpret(&ast).unwrap());
         assert_eq!(
             BytecodeProgram::from_data(&bytecode.to_data()).unwrap(),
@@ -522,7 +540,7 @@ mod tests {
     #[test]
     fn vm_rejects_noncanonical_phase_bytecode() {
         let ast = parse("output phase(1, one)", "invalid-phase-bytecode.ns").unwrap();
-        let mut bytecode = compile(&ast).unwrap();
+        let mut bytecode = lower(&ast).unwrap();
         let instruction = bytecode
             .instructions
             .iter_mut()

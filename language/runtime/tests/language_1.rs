@@ -72,9 +72,9 @@ fn complete_function_libraries_are_validated_before_check_or_compile() {
 }
 
 #[test]
-fn variadic_concat_expansion_is_visible_pure_source() {
+fn indexed_layout_expansion_is_visible_pure_source() {
     let document = parse_document(
-        "let parameters = (values...) => concat(9, values...)\n\
+        "let parameters = (a,b) => add(index(9,a),index(9,b,2))\n\
          add(parameters(2, 3), phase(2, add(index(9, 2), index(9, index(9, 3))))) = 0",
         "variadic.ns",
     )
@@ -96,62 +96,71 @@ fn variadic_concat_expansion_is_visible_pure_source() {
 }
 
 #[test]
-fn untrace_rank_is_an_exact_number_from_zero_through_one() {
-    for invalid in ["-1", "3/2"] {
-        let source =
-            format!("output untrace(add(index(1, 1), index(2, 1), index(3, 1)), {invalid})");
-        let error = parse_document(&source, "invalid-budget.ns").unwrap_err();
-
-        assert_eq!(error.0.code, "NSP051", "{invalid}");
-        assert!(error.0.span.is_some(), "{invalid}");
-    }
-}
-
-#[test]
-fn rank_descent_target_is_exact_greater_than_zero_through_one() {
-    for invalid in ["0", "-1/4", "5/4"] {
-        let source =
-            format!("output rank_descent(add(index(1, 1), index(2, 2), index(3, 3)), {invalid})");
-        let error = parse_document(&source, "invalid-rank-descent.ns").unwrap_err();
-
-        assert_eq!(error.0.code, "NSP069", "{invalid}");
-        assert!(error.0.span.is_some(), "{invalid}");
-    }
-
-    parse_document(
-        "output rank_descent(add(index(1, 1), index(2, 2), index(3, 3)), 1)",
-        "rank-one.ns",
-    )
-    .unwrap();
-}
-
-#[test]
-fn rank_descent_agreement_is_an_exact_unit_ratio() {
-    for invalid in ["-1/4", "5/4"] {
-        let source = format!(
-            "output rank_descent(add(index(1, 1), index(2, 2), index(3, 3)), 1/2, {invalid})"
+fn retired_builtins_are_ordinary_names_not_hidden_operations() {
+    use native_space_language::core;
+    for name in [
+        "trace",
+        "untrace",
+        "camera",
+        "length",
+        "rank_descent",
+        "rewrite",
+        "concat",
+        "fold",
+    ] {
+        let source = format!("let {name} = (x) => x\noutput {name}(7)");
+        let program = core::parse(&source, "ordinary.ns").unwrap();
+        assert_eq!(
+            core::interpret(&program).unwrap(),
+            core::NativeState::scalar(core::NativeScalar::from_text("7", "0").unwrap())
         );
-        let error = parse_document(&source, "invalid-agreement.ns").unwrap_err();
-
-        assert_eq!(error.0.code, "NSP074", "{invalid}");
-        assert!(error.0.span.is_some(), "{invalid}");
+        let undeclared = core::parse(&format!("output {name}(7)"), "missing.ns").unwrap();
+        core::interpret(&undeclared).unwrap_err();
     }
 }
-
 #[test]
-fn apply_validates_graph_values_and_requires_positive_sequence_positions() {
-    let document = parse_document("output apply(one, 1)", "wrong-apply.ns").unwrap();
-    let wrong_pattern = compile(&document).unwrap_err();
-    assert_eq!(wrong_pattern.0.code, "NSL001");
-    assert!(wrong_pattern.0.span.is_some());
-
-    let zero_position = parse_document(
-        "output apply(rank_descent(add(index(1, 1), index(2, 2), index(3, 3))), 0)",
-        "zero-position.ns",
-    )
-    .unwrap_err();
-    assert_eq!(zero_position.0.code, "NSP072");
-    assert!(zero_position.0.span.is_some());
+fn literal_and_call_ast_have_one_form_each() {
+    use native_space_language::core::{self, Expr};
+    for value in ["0", "1", "zero", "one", "scalar(2,3)"] {
+        assert!(matches!(
+            core::parse(&format!("output {value}"), "literal.ns")
+                .unwrap()
+                .result,
+            Expr::Literal { .. }
+        ));
+    }
+    for value in ["f(0)", "(f)(0)", "f(0)(1)"] {
+        assert!(matches!(
+            core::parse(&format!("let f = (x) => x\noutput {value}"), "call.ns")
+                .unwrap()
+                .result,
+            Expr::Call { .. }
+        ));
+    }
+    for kind in [
+        "zero",
+        "one",
+        "scalar",
+        "invoke",
+        "trace",
+        "untrace",
+        "camera",
+        "length",
+        "rank_descent",
+        "sequence_at",
+        "concat",
+        "fold",
+    ] {
+        serde_json::from_value::<Expr>(serde_json::json!({"kind":kind,"span":null})).unwrap_err();
+    }
+}
+#[test]
+fn calling_a_non_program_is_a_located_runtime_error() {
+    let Document::State(program) = parse_document("output (one)(1)", "invalid.ns").unwrap() else {
+        panic!("state")
+    };
+    let error = native_space_language::core::interpret(&program).unwrap_err();
+    assert!(error.0.span.is_some());
 }
 
 #[test]
@@ -323,7 +332,7 @@ fn semantic_analysis_rejects_noncanonical_phase_ast() {
     };
     *turns = 4;
 
-    let compile_error = native_space_language::bytecode::compile(&program).unwrap_err();
+    let compile_error = native_space_language::bytecode::lower(&program).unwrap_err();
     assert_eq!(compile_error.0.code, "NST002");
     assert!(compile_error.0.span.is_some());
 
@@ -369,11 +378,33 @@ fn quarter_turn_cycle_and_indexed_helix_are_checked_separately() {
         panic!("helix must parse as an exact state");
     };
     let direct = native_space_language::core::interpret(&helix).unwrap();
-    let bytecode = native_space_language::bytecode::compile(&helix).unwrap();
+    let bytecode = native_space_language::bytecode::lower(&helix).unwrap();
 
     assert_ne!(direct, native_space_language::core::NativeState::one());
     assert_eq!(
         native_space_language::bytecode::execute(&bytecode).unwrap(),
         direct
     );
+}
+
+#[test]
+fn unified_calls_check_arity_without_rejecting_partial_or_shadowed_calls() {
+    use native_space_language::core;
+    let invalid = core::parse("let f = (x) => x\noutput f(1, 2)", "arity.ns").unwrap();
+    assert!(
+        core::analyze(&invalid)
+            .iter()
+            .any(|diagnostic| diagnostic.code == "NSS004")
+    );
+    core::interpret(&invalid).unwrap_err();
+    for source in [
+        "let f = (x, y) => add(x, y)\noutput f(1)(2)",
+        "let f = (x) => x\nlet g = (a,b) => add(a,b)\nlet invoke = (f) => f(1,2)\noutput invoke(g)",
+    ] {
+        let program = core::parse(source, "calls.ns").unwrap();
+        assert_eq!(
+            core::interpret(&program).unwrap(),
+            core::NativeState::scalar(core::NativeScalar::from_text("3", "0").unwrap())
+        );
+    }
 }
