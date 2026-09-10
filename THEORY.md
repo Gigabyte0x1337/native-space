@@ -5,10 +5,40 @@
 Start with a pattern. Keep its operations, inputs, and indices. A camera
 observes that pattern without replacing it.
 
-## The coordinates
+## Pattern and observation
+
+A Pattern is a finite pair `(seed, reusable step)`. For one such generator:
+
+```text
+P = (S, G)
+P(0) = S
+P(k+1) = G(P(k))
+P(k) = G^k(S)
+```
+
+The shared compiled graph represents G, including its curried bindings. A graph
+address is not a Pattern or an observation index. Selecting k retains the same
+generator and an exact unwrapped repetition coordinate; it does not construct
+a prefix. Evaluation is a separate, budgeted readout.
+
+PHASE is cyclic. For a quarter-turn generator, k and k+4 have the same phase
+but remain different observations. Payload INDEX directions (for example prime
+identity and power depth) are separate from the outer observation coordinate.
+There is no automatic collision-prone insertion of k into payload direction 1.
+
+The runtime `pattern::Pattern` API pairs a retained seed with an existing unary
+FunctionValue. `observe(k)` is lazy. Explicit `project(maximum_steps)` reuses the
+graph, stepping on exact retained Native states. No prefix is stored in the
+Pattern or Observation. Temporary replay results may retain previous inputs;
+canonicalizing those away would change reflective steps. The seed and generator
+retain the recipe, including original zero provenance. Replay costs k calls;
+large k can be represented even when replay exceeds a requested budget.
+No new NS primitive or source keyword is introduced.
+
+## The derived cylindrical camera
 
 For one nonzero complex sample `z`, phase `phi`, and nonnegative integer
-index `k`:
+observation index `k`, the default cylindrical camera chooses:
 
 ```text
 X = ln|z|
@@ -29,7 +59,11 @@ At index zero, `1` lies at `(0,1,0)`. Every unit phase has depth zero.
 Index is not magnitude, graph address, or prime birth order unless the input
 explicitly uses that meaning.
 
-For indexed arrays, select one INDEX direction as `k`; keep all other labels
+INDEX does not mean radius: this camera stores k in radius k+1 so phase remains
+visible at k=0. The historical fixed-radius helix (cos(phi),sin(phi),k) is another
+camera for cyclic patterns, but does not independently display magnitude depth.
+
+For explicit array views, select one payload INDEX direction as `k`; keep all other labels
 alongside the displayed point. A multi-term state is a collection of samples,
 not one scalar or one magically complete 3D point.
 
@@ -47,7 +81,8 @@ square the value:
 negative:       phase += half a turn
 multiply by i:  phase += quarter of a turn
 frequency:     repeat a constant phase step
-advance index: increase the transverse radius
+select observation k: retain (P,k); evaluate G^k(S) only on request
+cylindrical camera: store observation k as transverse radius k+1
 ```
 
 A sample transform can preserve its index. Algebraic multiplication of two

@@ -556,6 +556,16 @@ impl Graph {
 }
 
 impl FunctionValue {
+    pub(crate) fn has_exact_arity(&self, count: usize) -> bool {
+        let signature = &self.graph.functions[&self.name];
+        !signature.variadic
+            && signature
+                .parameters
+                .len()
+                .checked_sub(self.environment.len())
+                == Some(count)
+    }
+
     /// Export an unbound function for explicit source-level tooling.
     ///
     /// # Errors

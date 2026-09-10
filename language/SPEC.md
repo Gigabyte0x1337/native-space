@@ -185,7 +185,7 @@ output value as pattern
 output value as boolean
 ```
 
-`as vector` returns the default depth–phase–index coordinates for one
+`as vector` returns the derived cylindrical depth–phase–index camera for one
 unindexed scalar (k=0). For `3+4i` this is `[ln(25)/2,3/5,4/5]`,
 serialized as exact rational/logarithmic/radical expressions. A literal zero
 returns a zero-boundary tag for X and null Y/Z because no phase was supplied.
@@ -193,6 +193,16 @@ Use `view --index-direction D` for indexed states; other labels remain
 retained. The quadratic cone is a separate derived camera, not this output.
 Boolean output accepts only exact zero (`false`) or exact one (`true`).
 Output cameras do not change the underlying state.
+
+## Pattern observations
+
+The runtime Pattern model is `(seed, reusable unary step)`; observation k means
+`step^k(seed)`, beginning with the unchanged seed at k=0. Selecting an
+observation does not expand a history. Its unwrapped INDEX is independent of
+wrapped PHASE and payload index directions. The compiled graph represents the
+step, not the Pattern itself. The cylindrical camera can store k as radius k+1,
+but that is not an algebraic definition of INDEX. This host runtime API adds no
+NS keyword; source functions still use the five existing operations.
 
 ## Source-defined functions
 

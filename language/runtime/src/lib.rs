@@ -18,6 +18,7 @@ pub mod expansion;
 pub mod frequency;
 pub mod gpu;
 pub mod logic;
+pub mod pattern;
 pub mod rank_descent;
 pub mod rank_policy;
 pub mod reflection;

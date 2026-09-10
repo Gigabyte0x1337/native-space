@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Rust guideline compliant 2026-02-21
 
-//! Depth–phase–index coordinates; floating-point geometry is an explicit observation.
+//! Derived depth–phase–index cameras, not the definition of a Pattern.
 //!
 //! The exact storage is q = |z|², a rational phase ray, and an integer index.
-//! This represents X = ln(q)/2 and (Y,Z) = (k+1) ray / |ray| without rounding
-//! logarithms or square roots. A point is one sample, not a replacement for
-//! the retained program. Multi-index states require an explicit index direction.
+//! The cylindrical camera chooses X = ln(q)/2 and (Y,Z) = (k+1) ray / |ray|.
+//! Radius stores the observation index; INDEX does not intrinsically mean radius.
+//! A Point is one sample for this camera, not a generator. Pattern observations
+//! supply k explicitly; payload index directions remain independent metadata.
 
 use num_bigint::BigUint;
 use num_traits::{One, ToPrimitive, Zero};
@@ -15,7 +16,7 @@ use serde_json::{Value, json};
 use super::{Depth, Scalar, ScalarData};
 use crate::core::{NativeScalar, NativeState, Rational, rational_text};
 
-/// An exact sample with depth, phase, and a retained integer index.
+/// An exact sample for the derived cylindrical depth–phase–index camera.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Point {
     scalar: Scalar,
@@ -250,4 +251,26 @@ pub fn projection(state: &NativeState, direction: u64) -> Value {
             json!({"index":index.to_data(),
                 "point":Point::new(Scalar::from_classical(value), index.depth(direction)).to_data()})
         }).collect::<Vec<_>>()})
+}
+
+/// Display a Pattern observation without confusing repetition with payload depth.
+///
+/// Every contribution uses the same observation index for the cylindrical
+/// camera. Payload indices are preserved separately, never used as graph addresses.
+///
+/// # Errors
+/// Propagates the observation's repetition-budget and step-evaluation errors.
+pub fn pattern_projection(
+    observation: &crate::pattern::Observation,
+    maximum_steps: u64,
+) -> Result<Value, crate::core::LanguageError> {
+    let state = observation.project(maximum_steps)?;
+    Ok(json!({
+        "camera":"depth-phase-index",
+        "observation_index":observation.index().to_string(),
+        "terms":state.0.iter().map(|(indices, value)| json!({
+            "indices":indices.to_data(),
+            "point":Point::new(Scalar::from_classical(value), observation.index().clone()).to_data()
+        })).collect::<Vec<_>>()
+    }))
 }

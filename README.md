@@ -8,20 +8,27 @@ keeping only its numerical answer.
 For example, `7 * 0` and `100 * 0` both display zero. Their retained patterns
 are different: we can still inspect the original inputs.
 
-## One sample, three coordinates
+## One pattern, repeated observations
 
-Write a complex value as magnitude and phase, and give it a retained index
-`k >= 0`. Its native coordinates are:
+A Pattern is a **seed and reusable step**. Observation zero is the seed;
+observation k is the same step repeated k times. One shared graph represents
+the generator, not a materialized list of its observations.
+
+INDEX identifies the unwrapped repetition. PHASE wraps: a quarter-turn pattern
+has the same phase after four more steps, but a different observation index.
+Multiplicative depth and payload index directions remain distinct.
+
+The default 3D camera displays these as:
 
 ```text
-X = ln|z|
-Y = (k + 1) cos(phase)
-Z = (k + 1) sin(phase)
+X = multiplicative depth = ln|z|
+angle around X = phase
+radius = observation index + 1
 ```
 
-Depth runs along X. Phase turns around X. Index sets the transverse radius.
-The value `1`, at index zero, is at `(0, 1, 0)`: depth zero, not the
-Cartesian origin. Exact zero is a separate negative-infinity depth boundary.
+**INDEX does not mean radius; this camera stores it there.** At k=0 the
+nonzero radius preserves phase. The logarithmic origin is magnitude one,
+while exact zero has a separate negative-infinity depth boundary.
 
 Multiplication adds depths and combines phases. Squaring a value doubles both.
 Addition combines contributions; cancellation does not erase their source.

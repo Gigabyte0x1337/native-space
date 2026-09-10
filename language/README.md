@@ -16,8 +16,9 @@ deleting this retained structure.
 
 Scalar storage uses exact squared magnitude and a rational phase ray.
 Depth is `ln|z| = ln(real²+imag²)/2`; logarithms are not rounded in storage.
-A sample at integer index k has transverse coordinates
-`(k+1)*ray/length(ray)`. Native `as vector` is this cylindrical view,
+The derived cylindrical camera stores a sample index k in transverse coordinates
+`(k+1)*ray/length(ray)`; this is not the meaning of INDEX.
+Native `as vector` requests this cylindrical view,
 not the old quadratic cone. Use an explicitly selected index direction when
 viewing arrays; graph addresses are not physical or index coordinates.
 
@@ -114,3 +115,51 @@ phase landmarks and wrapping, multi-channel Fourier readouts, derived cameras,
 zero provenance, deferred selection, rounded arithmetic, source/VM agreement,
 malformed input, and the compiled ALU. These finite checks are not a formal
 verification of Rust or a proof of universal numerical/scientific claims.
+
+## Finite Pattern semantics
+
+`pattern::Pattern::new(seed, step)` pairs the retained seed with one existing
+fixed-arity FunctionValue having one unbound parameter. Currying and REFLECT
+continue to use the same graph and environment; there is no second evaluator.
+
+`pattern.observe(k)` is a lazy selection of `step^k(seed)`. Its representation
+contains only the shared generator and exact BigUint index. Observation zero is
+the seed; repeated or out-of-order requests do not mutate a cursor. Index is
+not reduced modulo phase and is not an instruction address.
+
+Explicit `observation.project(maximum_steps)` calls the shared step k times on
+retained Native states, then projects the final result. It does not canonicalize
+between calls: a step can encode a partially bound function and inspect the
+retained argument structure with REFLECT. Canonical replacement would change G.
+The Observation continues to retain only the original seed, step and index;
+it never caches a prefix. Temporary replay results can retain earlier inputs
+and therefore consume growing memory. This is not a bounded-memory evaluator or
+a constant-time jump to k. Step errors leave other selections intact.
+
+A step must return a state, not an unresolved function or argument pack. Generic
+source INDEX still shifts a payload direction; observation INDEX is held outside
+that payload to avoid collisions with power depth, arrays, and graph metadata.
+
+`retained::coordinates::pattern_projection` derives the current cylindrical
+camera from an Observation and retains all payload indices alongside the points.
+The separate local playground uses this API for Pattern playback. Its first
+frame is the seed, and seeking selects an observation rather than advancing a
+hidden cursor. The graph-record inspector remains separate: graph addresses are
+not repetition coordinates. No historical camera is restored and no new language
+keyword is added.
+
+`observation.evaluate(maximum_steps)` exposes the retained result for ordinary
+Native readout functions. It does not canonicalize the input to those functions:
+doing so could change reflective readouts. `project` is the explicit canonical
+readout of that same evaluation.
+
+Tests in `runtime/tests/pattern.rs` cover zero/first observations, phase cycles,
+shared graph identity, curried zero bindings, independent payload depth, large
+lazy indices, bounded replay, failed steps, and generator size after repeated
+projection.
+
+Sequential consumers may use `pattern.cursor()`. This disposable evaluator holds
+only the current retained result and index, outside Pattern. Forward seeks reuse
+that result; backward seeks replay the seed. Failed evaluation leaves the cursor
+unchanged. It must agree with independent observation evaluation, including retained
+provenance, and never becomes the serialized Pattern representation.
