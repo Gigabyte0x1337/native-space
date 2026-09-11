@@ -561,7 +561,7 @@ impl State {
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-            states.push(state.retaining(&retained));
+            states.push(state.retaining(&retained).at_span(node.span));
         }
         let state = states
             .get(root)

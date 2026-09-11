@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Rust guideline compliant 2026-02-21
 
-//! Finite generators with independently indexed, unmaterialized observations.
+//! Authoritative Native Pattern records with shared, disposable decoded views.
 //!
 //! A Pattern owns one seed and one reusable unary step graph, including curried
 //! bindings. An Observation is that same Pattern plus an unwrapped repetition
-//! index. Neither construction executes the step or allocates a prefix.
+//! index. Both relationships are Native records. Rust fields cache decoded views;
+//! `native()`/`to_data()` contain everything needed to rebuild those views.
+//! Neither selection nor successor executes the step or allocates a prefix.
 //!
 //! Explicit projection replays the step on retained Native states. Only the
 //! current result is held, but that result may itself retain earlier inputs.
@@ -34,7 +36,39 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
-use serde_json::{Value as Json, json};
+use serde_json::Value as Json;
+
+mod encoding;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pattern_adds_no_core_operation_or_machine_opcode() {
+        use crate::core::{LANGUAGE_NAMESPACE, LanguageNameKind};
+        let operations = LANGUAGE_NAMESPACE
+            .iter()
+            .filter(|(_, kind)| matches!(kind, LanguageNameKind::CoreOperation))
+            .map(|(name, _)| name.to_ascii_lowercase())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            operations,
+            ["add", "multiply", "phase", "index", "reflect"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        );
+        for name in ["pattern", "observation", "observe", "successor"] {
+            serde_json::from_value::<crate::bytecode::Opcode>(serde_json::json!(name)).unwrap_err();
+            serde_json::from_value::<crate::retained::Operation>(
+                serde_json::json!({"operation": name}),
+            )
+            .unwrap_err();
+            let source =
+                crate::core::parse(&format!("output {name}(1)"), "no-intrinsic.ns").unwrap();
+            crate::strand::execution::Graph::compile(&source).unwrap_err();
+        }
+    }
+}
 
 use crate::{
     core::{Diagnostic, LanguageError, NativeState},
@@ -44,6 +78,7 @@ use crate::{
 
 #[derive(Debug)]
 struct Generator {
+    native: State,
     seed: State,
     step: FunctionValue,
 }
@@ -55,6 +90,7 @@ pub struct Pattern(Arc<Generator>);
 /// One repetition of a Pattern, distinct even when its phase repeats.
 #[derive(Clone, Debug)]
 pub struct Observation {
+    native: State,
     pattern: Pattern,
     index: BigUint,
 }
@@ -129,6 +165,45 @@ fn error(message: &str) -> LanguageError {
 }
 
 impl Pattern {
+    /// Return the authoritative Native record, including escaped seed and step.
+    #[must_use]
+    pub fn native(&self) -> &State {
+        &self.0.native
+    }
+
+    /// Recover a Pattern and its callable cache from Native records, without source.
+    ///
+    /// # Errors
+    /// Rejects malformed fields, retained seed graphs, function graphs or step arity.
+    pub fn from_native(native: &State) -> Result<Self, LanguageError> {
+        let (seed, step) = encoding::decode_pattern(native)?;
+        if !step.has_exact_arity(1) {
+            return Err(error(
+                "pattern step must have exactly one unbound parameter",
+            ));
+        }
+        Ok(Self(Arc::new(Generator {
+            native: State::from_projection(native.project()),
+            seed,
+            step,
+        })))
+    }
+
+    /// Serialize the authoritative Native Pattern, without decoded caches.
+    #[must_use]
+    pub fn to_data(&self) -> Json {
+        self.native().native_data()
+    }
+
+    /// Reconstruct a Pattern from its ordinary Native-state serialization.
+    ///
+    /// # Errors
+    /// Rejects malformed retained-state serialization or invalid Pattern records.
+    pub fn from_data(data: &Json) -> Result<Self, LanguageError> {
+        let native = State::from_data(data).map_err(|message| error(&message))?;
+        Self::from_native(&native)
+    }
+
     /// Pair a seed with a unary step without executing or recompiling it.
     ///
     /// # Errors
@@ -139,13 +214,15 @@ impl Pattern {
                 "pattern step must have exactly one unbound parameter",
             ));
         }
-        Ok(Self(Arc::new(Generator { seed, step })))
+        let native = encoding::pattern(&seed, &step)?;
+        Ok(Self(Arc::new(Generator { native, seed, step })))
     }
 
     /// Select a repetition without computing it or constructing preceding observations.
     #[must_use]
     pub fn observe(&self, index: BigUint) -> Observation {
         Observation {
+            native: encoding::observation(self, &index),
             pattern: self.clone(),
             index,
         }
@@ -173,7 +250,7 @@ impl Pattern {
         &self.0.step
     }
 
-    /// Check generator identity, not undecidable extensional program equivalence.
+    /// Check cache allocation identity, not structural or extensional program equivalence.
     #[must_use]
     pub fn shares_generator(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
@@ -181,6 +258,30 @@ impl Pattern {
 }
 
 impl Observation {
+    /// Return the authoritative Native observation, with no host-only metadata.
+    #[must_use]
+    pub const fn native(&self) -> &State {
+        &self.native
+    }
+
+    /// Recover the entire observation from Native data without source recompilation.
+    ///
+    /// # Errors
+    /// Rejects invalid Pattern fields, step graphs and non-natural observation indices.
+    pub fn from_native(native: &State) -> Result<Self, LanguageError> {
+        let (pattern, index) = encoding::decode_observation(native)?;
+        Ok(pattern.observe(index))
+    }
+
+    /// Load only a serialized Native state and reconstruct every typed cache.
+    ///
+    /// # Errors
+    /// Rejects invalid retained-state serialization or malformed observation records.
+    pub fn from_data(data: &Json) -> Result<Self, LanguageError> {
+        let native = State::from_data(data).map_err(|message| error(&message))?;
+        Self::from_native(&native)
+    }
+
     /// Select the next unwrapped repetition without executing or expanding its graph.
     ///
     /// Only the arbitrary-precision index changes. Evaluation remains explicit
@@ -202,10 +303,12 @@ impl Observation {
         &self.index
     }
 
-    /// Compare selections of the same generator, without projecting them.
+    /// Compare exact Native generator records and index, not extensional equivalence.
     #[must_use]
     pub fn same_selection(&self, other: &Self) -> bool {
-        self.index == other.index && self.pattern.shares_generator(&other.pattern)
+        self.index == other.index
+            && (self.pattern.shares_generator(&other.pattern)
+                || self.pattern.native().project() == other.pattern.native().project())
     }
 
     /// Observe step^k(seed) as a canonical Native state with bounded replay.
@@ -237,15 +340,9 @@ impl Observation {
 
     /// Serialize the generator and index, never an expanded observation history.
     ///
-    /// # Errors
-    /// Propagates invalid or over-budget function binding serialization.
-    pub fn to_data(&self) -> Result<Json, LanguageError> {
-        let step = Value::Function(self.pattern.step().clone()).native()?;
-        Ok(json!({
-            "schema":"native-pattern-observation",
-            "index":self.index.to_string(),
-            "seed":self.pattern.seed().native_data(),
-            "step":step.native_data()
-        }))
+    /// Uses the ordinary retained-state wire format; no extra JSON metadata is needed.
+    #[must_use]
+    pub fn to_data(&self) -> Json {
+        self.native.native_data()
     }
 }

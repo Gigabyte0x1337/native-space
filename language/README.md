@@ -123,7 +123,7 @@ fixed-arity FunctionValue having one unbound parameter. Currying and REFLECT
 continue to use the same graph and environment; there is no second evaluator.
 
 `pattern.observe(k)` is a lazy selection of `step^k(seed)`. Its representation
-contains only the shared generator and exact BigUint index. Observation zero is
+is Native data containing the shared generator and exact integer index. Observation zero is
 the seed; repeated or out-of-order requests do not mutate a cursor. Index is
 not reduced modulo phase and is not an instruction address.
 
@@ -170,3 +170,45 @@ the observation actually reached, initially `(P,0)`. A failed seek leaves both
 its state and observation unchanged. The cursor's execution budget does not
 restrict which indices can be represented lazily. Pattern remains a semantic
 pair over the shared graph, not a sixth opcode or a replacement for REFLECT.
+
+### Authoritative Native records
+
+`Pattern::native()` and `Observation::native()` expose the complete record.
+`to_data()` uses the ordinary retained-state wire format.
+`from_native()` and `from_data()` reconstruct the decoded views without source
+recompilation. Seed decoding preserves operation edges, retained inputs and
+source locations. The old host-only observation JSON envelope is removed.
+
+| Record | INDEX field | Content |
+| --- | --- | --- |
+| Pattern | 100 | Kind marker 1 |
+| Pattern | 101 | Complete retained seed graph records |
+| Pattern | 102 | Callable step graph and portable bindings |
+| Observation | 105 | Kind marker 2 |
+| Observation | 104 | Pattern record |
+| Observation | 103 | INDEX 1: presence 1; INDEX 6: exact k |
+
+These are schema addresses, not reserved language operations. Seed directions
+are represented inside the existing retained-state codec; function arguments
+use the existing portable binding codec. User payload directions therefore
+cannot alias outer fields. Presence distinguishes index zero from a missing
+index. Decoders reject malformed outer fields and invalid generator records.
+
+`import "pattern.ns"` exposes ordinary field selectors and
+`observation_successor(o)`. Its implementation adds
+`index(103,index(6,1))`: only k changes. The step selector returns callable
+Native data. The seed selector returns retained graph **records**, not a
+projection that would discard zero provenance; the generic
+`strand::execution::state_data::decode` reconstructs that retained State.
+
+Successor shares the existing Native Pattern node and creates only new
+observation wrappers. Reload normalizes those outer wrappers; it does not
+rewrite the retained seed or compile the step. Decoded fields are immutable
+caches. Record equality means structural generator identity, not a proof that
+different programs compute the same function.
+
+Tests in `runtime/tests/native_pattern.rs` discard original objects before
+reload, exercise ordinary REFLECT extraction and step replacement, protect
+arbitrary payload directions, and verify exact indices beyond u64. Huge
+selection is tested separately from bounded replay; no infeasible replay is
+claimed.

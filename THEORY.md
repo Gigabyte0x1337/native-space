@@ -33,6 +33,14 @@ Pattern or Observation. Temporary replay results may retain previous inputs;
 canonicalizing those away would change reflective steps. The seed and generator
 retain the recipe, including original zero provenance. Replay costs k calls;
 large k can be represented even when replay exceeds a requested budget.
+Pattern and Observation are authoritative Native records, not Rust-only
+relationships. A retained seed is encoded with the existing addressed-state
+codec; the step uses the existing callable graph and portable binding codec.
+The exact nonnegative observation index is a scalar in its own record.
+Rust may cache decoded fields, but deleting those caches loses no meaning:
+`from_native` / `from_data` reconstruct the generator without compiling source.
+REFLECT reads or replaces these fields just like other Native data.
+
 No new NS primitive or source keyword is introduced.
 
 The finite-generator invariant holds at every successor: `(P,k)` becomes

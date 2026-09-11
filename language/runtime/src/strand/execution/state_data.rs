@@ -14,7 +14,11 @@ const STATE_NODE: u64 = 29;
 const INPUT: u64 = 30;
 const SCOPE: u64 = 31;
 
-pub(super) fn encode(state: &State) -> Result<State, LanguageError> {
+/// Encode complete retained state as ordinary, inspectable Native records.
+///
+/// # Errors
+/// Rejects operation metadata that cannot be serialized.
+pub fn encode(state: &State) -> Result<State, LanguageError> {
     let plan = state.plan();
     let mut header = Coordinate::new(STATE_ROOT, None);
     header.number_a = Some(plan.len().to_string());
@@ -40,7 +44,11 @@ pub(super) fn encode(state: &State) -> Result<State, LanguageError> {
     literal(&nest(records))
 }
 
-pub(super) fn decode(state: &NativeState) -> Result<State, LanguageError> {
+/// Reconstruct retained state from Native records without evaluating source.
+///
+/// # Errors
+/// Rejects malformed records, invalid edges/operators and record limits.
+pub fn decode(state: &NativeState) -> Result<State, LanguageError> {
     let source = "<bindings>";
     let records = decode_coordinates(state, source, None)?;
     let invalid = || diagnostic("invalid retained argument graph", source, None);

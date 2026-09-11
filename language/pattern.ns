@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Ordinary record accessors, not new operations.
+# Schema addresses are local to this record; seed indices are escaped as data.
+let observation_pattern = (o) =>
+    reflect(o, index(104, v), v)
+
+# This is the complete retained seed encoded as addressed Native records.
+let observation_seed_records = (o) =>
+    reflect(o, index(104, index(101, v)), v)
+
+# The existing function representation is directly callable.
+let observation_step = (o) =>
+    reflect(o, index(104, index(102, v)), v)
+
+# At k=0 this reads zero; INDEX 103 / 1 independently records its presence.
+let observation_index = (o) =>
+    reflect(o, index(103, index(6, v)), v)
+
+# ADD changes only the exact scalar k, leaving the generator fields untouched.
+let observation_successor = (o) =>
+    add(o, index(103, index(6, 1)))

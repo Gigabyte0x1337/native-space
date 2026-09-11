@@ -10,7 +10,7 @@ use num_bigint::BigUint;
 #[test]
 fn cyclic_playback_advances_observations_without_expanding_the_compiled_generator() {
     let p = generator("let step = (x) => phase(1,x)\noutput 1");
-    let original = p.observe(0_u32.into()).to_data().unwrap();
+    let original = p.native().native_data();
     let mut cursor = p.cursor();
     let mut selected = cursor.observation();
     // Many complete cycles, with an independent exact four-phase oracle.
@@ -35,10 +35,11 @@ fn cyclic_playback_advances_observations_without_expanding_the_compiled_generato
         assert!(successor.pattern().shares_generator(&p));
         selected = successor;
     }
-    let final_data = cursor.observation().to_data().unwrap();
-    assert_eq!(final_data["seed"], original["seed"]);
-    assert_eq!(final_data["step"], original["step"]);
-    assert_eq!(final_data["index"], "256");
+    assert_eq!(
+        cursor.observation().pattern().native().native_data(),
+        original
+    );
+    assert_eq!(cursor.observation().index(), &BigUint::from(256_u32));
     let reached = cursor.observation();
     cursor.seek(selected.index(), 256).unwrap_err();
     assert!(cursor.observation().same_selection(&reached));
@@ -47,7 +48,7 @@ fn cyclic_playback_advances_observations_without_expanding_the_compiled_generato
 #[test]
 fn successor_crosses_machine_integer_limits_without_wrapping_or_materializing_steps() {
     let p = generator("let step = (x) => phase(1,x)\noutput 1");
-    let original = p.observe(0_u32.into()).to_data().unwrap();
+    let original = p.native().native_data();
     for k in [BigUint::from(u64::MAX), BigUint::from(2_u32).pow(256)] {
         let a = p.observe(k.clone());
         let b = a.successor();
@@ -55,9 +56,7 @@ fn successor_crosses_machine_integer_limits_without_wrapping_or_materializing_st
         assert!(!a.same_selection(&b));
         assert!(a.pattern().shares_generator(b.pattern()));
         assert!(a.pattern().step().shares_graph(b.pattern().step()));
-        let data = b.to_data().unwrap();
-        assert_eq!(data["seed"], original["seed"]);
-        assert_eq!(data["step"], original["step"]);
+        assert_eq!(b.pattern().native().native_data(), original);
         b.evaluate(0).unwrap_err();
     }
 }
@@ -95,26 +94,24 @@ fn same_phase_at_k_and_k_plus_four_is_not_the_same_observation() {
         assert!(!a.same_selection(&b));
         assert!(a.pattern().shares_generator(b.pattern()));
         assert!(a.pattern().step().shares_graph(b.pattern().step()));
-        assert_ne!(a.to_data().unwrap()["index"], b.to_data().unwrap()["index"]);
+        assert_ne!(a.native().project(), b.native().project());
     }
 }
 
 #[test]
 fn selections_keep_one_finite_generator_without_materializing_a_prefix() {
     let p = generator("let step = (x) => phase(1,x)\noutput multiply(0,7)");
-    let first = p.observe(0_u32.into()).to_data().unwrap();
+    let first = p.native().native_data();
+    let seed = p.seed().native_data();
     let huge = p.observe(BigUint::from(10_u32).pow(100));
-    let later = huge.to_data().unwrap();
-    assert_eq!(first["seed"], later["seed"]);
-    assert_eq!(first["step"], later["step"]);
-    assert_eq!(later.as_object().unwrap().len(), 4);
+    assert_eq!(first, huge.pattern().native().native_data());
     assert!(
         huge.project(100)
             .unwrap_err()
             .to_string()
             .contains("budget")
     );
-    assert_eq!(p.seed().native_data(), first["seed"]);
+    assert_eq!(p.seed().native_data(), seed);
     assert!(p.seed().native_data()["nodes"].as_array().unwrap().len() > 1);
 }
 
@@ -122,9 +119,9 @@ fn selections_keep_one_finite_generator_without_materializing_a_prefix() {
 fn repeated_projection_does_not_cache_replay_history_in_the_generator() {
     let p = generator("let step = (x) => reflect(phase(1,x),v,v)\noutput 1");
     let observation = p.observe(4096_u32.into());
-    let before = observation.to_data().unwrap();
+    let before = observation.to_data();
     assert_eq!(observation.project(4096).unwrap(), scalar("1"));
-    assert_eq!(observation.to_data().unwrap(), before);
+    assert_eq!(observation.to_data(), before);
 }
 
 #[test]
@@ -255,7 +252,7 @@ fn cursor_and_independent_observations_agree_after_forward_backward_and_failed_s
         "let step = (x) => multiply(index(7,2),x)\noutput 1",
     ] {
         let p = generator(source);
-        let before = p.observe(0_u32.into()).to_data().unwrap();
+        let before = p.observe(0_u32.into()).to_data();
         let mut cursor = p.cursor();
         for k in [0_u32, 1, 3, 3, 1, 0, 4, 2] {
             let expected = p.observe(k.into()).evaluate(4).unwrap();
@@ -269,7 +266,7 @@ fn cursor_and_independent_observations_agree_after_forward_backward_and_failed_s
             cursor.seek(&3_u32.into(), 4).unwrap().native_data(),
             p.observe(3_u32.into()).evaluate(4).unwrap().native_data()
         );
-        assert_eq!(p.observe(0_u32.into()).to_data().unwrap(), before);
+        assert_eq!(p.observe(0_u32.into()).to_data(), before);
     }
     let p = generator("let f = (x) => x\nlet step = (x) => f\noutput 7");
     let mut cursor = p.cursor();

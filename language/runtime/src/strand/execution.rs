@@ -12,7 +12,7 @@ use crate::retained::State;
 
 mod environment;
 mod machine;
-mod state_data;
+pub mod state_data;
 mod template;
 #[cfg(test)]
 mod tests;
@@ -556,6 +556,14 @@ impl Graph {
 }
 
 impl FunctionValue {
+    /// Decode callable Native graph records and bindings without compiling source.
+    ///
+    /// # Errors
+    /// Rejects malformed graph records, bindings, roots, or decoding limits.
+    pub fn from_native(native: &State) -> Result<Self, LanguageError> {
+        Self::load(native, "<native-function>")
+    }
+
     pub(crate) fn has_exact_arity(&self, count: usize) -> bool {
         let signature = &self.graph.functions[&self.name];
         !signature.variadic
