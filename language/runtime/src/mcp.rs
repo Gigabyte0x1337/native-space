@@ -1,12 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Rust guideline compliant 2026-02-21
-
-//! Exposes operation derivation through MCP over standard input and output.
-
-use std::ffi::OsStr;
-use std::path::{Component, Path};
-
-use native_space_language::expansion::{DerivationReport, derive, format_report, relativize_paths};
+//! Protocol negotiation and framing use rmcp rather than a custom JSON-RPC loop.
 use rmcp::{
     ErrorData, ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -15,209 +8,40 @@ use rmcp::{
     transport::stdio,
 };
 use serde::Deserialize;
-
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct DeriveOperationsParameters {
-    /// Source-defined function to expand.
-    function: String,
-    /// Dynamic function names passed to the selected function.
-    #[serde(default)]
-    arguments: Vec<String>,
-    /// Relative `.ns` function-library path; omit for the generic library.
-    #[serde(default)]
-    source: Option<String>,
+#[serde(deny_unknown_fields)]
+struct RunInput {
+    /// Complete NS2 source; no filesystem or network access is exposed.
+    source: String,
 }
-
-#[derive(Debug, Clone)]
-struct OperationTools {
+#[derive(Clone, Debug)]
+struct Tools {
     tool_router: ToolRouter<Self>,
 }
-
-impl OperationTools {
+#[tool_router]
+impl Tools {
     fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
         }
     }
-}
-
-#[tool_router]
-impl OperationTools {
-    #[expect(
-        clippy::unused_self,
-        reason = "rmcp tool handlers require a receiver for router dispatch"
-    )]
-    #[tool(
-        description = "Derive a Native Space function as primitive operations and finite self-references"
-    )]
-    fn derive_operations(
-        &self,
-        Parameters(parameters): Parameters<DeriveOperationsParameters>,
-    ) -> Result<String, ErrorData> {
-        let root = std::env::current_dir().map_err(|error| {
-            ErrorData::internal_error(
-                format!("could not resolve the working directory: {error}"),
-                None,
-            )
-        })?;
-        derive_report(&root, &parameters).map(|report| format_report(&report))
+    #[tool(description = "Execute exact Native Space 2 source and return its explicit output")]
+    fn run(&self, Parameters(input): Parameters<RunInput>) -> Result<String, ErrorData> {
+        super::run_source(&input.source, "mcp.ns").map_err(|e| ErrorData::invalid_params(e, None))
     }
 }
-
-fn derive_report(
-    root: &Path,
-    parameters: &DeriveOperationsParameters,
-) -> Result<DerivationReport, ErrorData> {
-    let Some(source) = parameters.source.as_deref() else {
-        return derive(&parameters.function, &parameters.arguments)
-            .map_err(|error| ErrorData::invalid_params(error.summary(), None));
-    };
-
-    let relative = Path::new(source);
-    if relative.extension() != Some(OsStr::new("ns"))
-        || relative
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err(ErrorData::invalid_params(
-            "source must be a relative .ns path inside the working directory",
-            None,
-        ));
-    }
-
-    let canonical_root = root.canonicalize().map_err(|error| {
-        ErrorData::internal_error(
-            format!("could not resolve the working directory: {error}"),
-            None,
-        )
-    })?;
-    let canonical_source = root.join(relative).canonicalize().map_err(|error| {
-        ErrorData::invalid_params(
-            format!("could not resolve source {source:?}: {error}"),
-            None,
-        )
-    })?;
-    if !canonical_source.starts_with(&canonical_root) {
-        return Err(ErrorData::invalid_params(
-            "source must remain inside the working directory",
-            None,
-        ));
-    }
-
-    let library =
-        native_space_language::derivation::load_within(&canonical_source, &canonical_root)
-            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
-    let mut report = native_space_language::expansion::derive_from_library(
-        &library,
-        &parameters.function,
-        &parameters.arguments,
-    )
-    .map_err(|error| ErrorData::invalid_params(error.summary(), None))?;
-    relativize_paths(&mut report, &canonical_root);
-    Ok(report)
-}
-
-#[tool_handler(router = self.tool_router)]
-impl ServerHandler for OperationTools {
+#[tool_handler(router=self.tool_router)]
+impl ServerHandler for Tools {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(
-                Implementation::new("native-space", env!("CARGO_PKG_VERSION"))
-                    .with_title("Native Space Operation Tools")
-                    .with_description("Transparent Native Space function derivation"),
-            )
-            .with_instructions(
-                "Use derive_operations to inspect core operations and finite pattern references.",
-            )
+            .with_server_info(Implementation::new("native-space", "2.0.0"))
     }
 }
-
-/// Runs the operation tools over MCP stdio until the client disconnects.
-///
-/// Standard output is reserved exclusively for MCP protocol frames.
-///
-/// # Errors
-///
-/// Returns an error when the MCP transport cannot start or terminates with a
-/// protocol or I/O failure.
-pub(crate) async fn run_stdio() -> Result<(), Box<dyn std::error::Error>> {
-    let server = OperationTools::new().serve(stdio()).await?;
-    server.waiting().await?;
+pub async fn run() -> Result<(), String> {
+    let server = Tools::new()
+        .serve(stdio())
+        .await
+        .map_err(|e| e.to_string())?;
+    server.waiting().await.map_err(|e| e.to_string())?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mcp_tool_uses_the_human_derivation_report() {
-        let result = OperationTools::new()
-            .derive_operations(Parameters(DeriveOperationsParameters {
-                function: "axis_subtract".to_owned(),
-                arguments: vec!["identity_phase".to_owned(), "identity_phase".to_owned()],
-                source: None,
-            }))
-            .expect("built-in derivation must succeed");
-
-        assert!(result.starts_with("Derived: axis_subtract"));
-        assert!(result.contains("Primitive operations:"));
-        assert!(result.contains("PHASE(0)"));
-        assert!(result.contains("ADD()"));
-    }
-
-    #[test]
-    fn mcp_tool_loads_a_scoped_source_library() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let report = derive_report(
-            &root,
-            &DeriveOperationsParameters {
-                function: "local_pattern".to_owned(),
-                arguments: Vec::new(),
-                source: Some("language/runtime/tests/fixtures/import-root.ns".to_owned()),
-            },
-        )
-        .expect("scoped source must derive");
-
-        assert_eq!(report.function, "local_pattern");
-        assert!(!report.primitive_steps.is_empty());
-        assert!(
-            report
-                .primitive_steps
-                .iter()
-                .all(|step| !Path::new(&step.source.file).is_absolute())
-        );
-    }
-
-    #[test]
-    fn mcp_tool_rejects_sources_outside_the_working_directory() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let error = derive_report(
-            &root,
-            &DeriveOperationsParameters {
-                function: "axis_subtract".to_owned(),
-                arguments: Vec::new(),
-                source: Some("../outside.ns".to_owned()),
-            },
-        )
-        .expect_err("parent traversal must be rejected");
-
-        assert!(error.message.contains("relative .ns path"));
-    }
-
-    #[test]
-    fn scoped_loading_rejects_imports_outside_the_source_root() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-        let error = derive_report(
-            &root,
-            &DeriveOperationsParameters {
-                function: "local_pattern".to_owned(),
-                arguments: Vec::new(),
-                source: Some("import-root.ns".to_owned()),
-            },
-        )
-        .expect_err("the generic library import must leave the fixtures root");
-
-        assert!(error.message.contains("configured source root"));
-    }
 }

@@ -1,98 +1,65 @@
 <!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+# Native Space 2
 
-# Native Space
+Native Space keeps an exact state and the operations that produced it.
+The state is three rational components: **LOAD, ADD, MULTIPLY**, written
+`(L,A,M)`. It is not a count of instructions.
 
-Native Space keeps a pattern and the operations that produced it, rather than
-keeping only its numerical answer.
+The classical value is `M/L`. The independent order/frame readout is
+`R=(A+M)/L`. Multiplying all three components by the same nonzero scale
+preserves those two readouts, but Native Space retains that scale.
 
-For example, `7 * 0` and `100 * 0` both display zero. Their retained patterns
-are different: we can still inspect the original inputs.
+## A program and its projections
 
-## One pattern, repeated observations
+```ns
+# One shared step, reused without copying its function graph.
+let step = (s) => split(s, "add")
 
-A Pattern is a **seed and reusable step**. Observation zero is the seed;
-observation k is the same step repeated k times. One shared graph represents
-the generator, not a materialized list of its observations.
+# Views are ordinary functions and do not replace the program's state.
+let native = (s) => s
+let classical = (s) =>
+    reflect(s, state(l,a,m), multiply(m, inverse(l)))
 
-INDEX identifies the unwrapped repetition. PHASE wraps: a quarter-turn pattern
-has the same phase after four more steps, but a different observation index.
-Multiplicative depth and payload index directions remain distinct.
-
-The default 3D camera displays these as:
-
-```text
-X = multiplicative depth = ln|z|
-angle around X = phase
-radius = observation index + 1
+let p = program(state(1,1,1), step)
+output observe(p, 4) as state
 ```
 
-**INDEX does not mean radius; this camera stores it there.** At k=0 the
-nonzero radius preserves phase. The logarithmic origin is magnitude one,
-while exact zero has a separate negative-infinity depth boundary.
+The seed is `(1,1,1)`. One ADD split gives `(1/2,3/2,1)`.
+The total stays 3, while its classical value changes from 1 to 2.
+Four splits give `(1/16,31/16,1)`, whose classical value is 16.
 
-Multiplication adds depths and combines phases. Squaring a value doubles both.
-Addition combines contributions; cancellation does not erase their source.
-These are the roles of **ADD, MULTIPLY, PHASE, INDEX**.
-**REFLECT** matches parts of an evaluated Native state and rebuilds them.
-Together these are the five language operations; functions are directly
-inspectable Native graphs, not a separate trace format.
+A Program is a finite seed plus reusable function. An Observation retains
+that Program and an exact nonnegative index. Selecting an index is lazy;
+numerical/state output evaluates the requested steps. No output prefix is
+stored in the Program. Evaluation retains actual operation inputs.
 
-The classical value is a readout of this pattern. Cone and sphere coordinates
-are derived views, not the core. A numerical readout alone does not retain
-index or history.
+The playground displays either the full L/A/M state (or an explicitly
+transformed frame) or its classical output. It does not use instruction
+addresses as geometry. Optional retained-state points are actual intermediate
+states, not a universal geometric encoding of an unbound function.
 
-## Try it
+## Run
 
-Build with Rust 1.88 or newer:
+Rust 1.88 or newer:
 
 ```sh
 cargo build --release --locked --manifest-path language/runtime/Cargo.toml
-```
-
-NS source stays simple:
-
-```ns
-# phase takes quarter-turn steps: 1 means i.
-let z = add(3, phase(1, 4))
-output z as vector
-```
-
-The exact vector is `[ln(25)/2, 3/5, 4/5]`, serialized as exact expressions.
-It is not converted to decimals unless requested.
-
-Save the source above as `program.ns`, then run:
-
-```sh
-native-space run program.ns
-native-space run program.ns --numeric f64
-native-space view program.ns --index-direction 7
-native-space view program.ns --index-direction 7 --numeric f64
-```
-
-Use `as number` for a real classical result, or bare output / `as pattern`
-for the retained state.
-The branch view includes exact INDEX labels and source connections.
-
-Exact execution is the default. In f64 mode each arithmetic step rounds;
-the original graph and integer indices remain exact. Rounded output is not a
-proof and is never substituted into the retained graph. Overflow and
-underflow-to-zero produce an error.
-
-The current exact scalar domain is rational real/imaginary components.
-Logarithms and radicals in its 3D readout stay symbolic. This is not yet a
-general symbolic evaluator for arbitrary irrational scalar inputs.
-
-Read [the theory](THEORY.md) for the model, identities, and deliberate limits;
-[the language specification](language/SPEC.md) for syntax; and
-[the implementation contract](language/README.md) for runtime decisions.
-
-Standalone applications and historical proof documents live outside this
-foundation. No universal optimizer, scientific theorem, or performance gain
-is claimed by these coordinate identities.
-
-```sh
 cargo test --locked --manifest-path language/runtime/Cargo.toml
+native-space run example.ns
+native-space inspect example.ns
+native-space mcp
 ```
 
-Code uses strong copyleft; theory and documentation are share-alike.
-See [licensing](LICENSE.md).
+Use `as number` for classical output, `as vector` for exact L/A/M strings,
+and `as program` for the portable finite Program/Observation representation.
+The CLI's `check` executes the document; it is not a universal theorem prover.
+
+[Theory](THEORY.md) · [Language](language/SPEC.md) ·
+[Design and migration](language/README.md) · [Licensing](LICENSE.md)
+
+This is a breaking replacement of the complex/depth/PHASE scalar model.
+PHASE and arithmetic INDEX are removed. Complex arithmetic, old prime examples,
+GPU solvers and NS1 artifacts are not silently interpreted as NS2.
+Exact rational linear transforms are executable; nonlinear log/orthogonal
+cameras are explicit numerical probes, not exact scalar storage.
+No general optimizer, prime theorem, or scientific speedup is claimed.
