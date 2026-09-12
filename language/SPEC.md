@@ -71,7 +71,50 @@ Every example defines ordinary `native(s)` and `classical(s)` projection
 functions; these names are UI settings, not reserved language names.
 Readout functions do not feed back into the Program.
 
-## Limits
+## Projective states and computational frames
+
+The scalar equations are unchanged. Raw equality compares L/A/M, finite
+decoded equality compares both (R,x), projective equality compares nonzero
+triples by cross-products, and provenance equality also compares retained
+structure. None of these relations silently replaces another.
+
+Library State APIs: is_projective_point(), projective_equivalent(other),
+is_finite(), is_boundary(). The all-zero raw triple is stored and round-trips,
+but projective comparison rejects it. L=0 never decodes to a finite value.
+T=L+A+M=0 only invalidates the simplex camera. M=0 or A+M=0 invalidates full
+inverse even when the raw state is nonzero.
+
+Existing source arithmetic on framed values now uses cached rational tensors
+for ADD/MULTIPLY and transported matrices for negate/split. Inverse uses the
+exact canonical reference route. The result keeps the first explicit frame;
+mixed local inputs are converted by T1*T2^-1. Exact raw canonical results are
+unchanged. Retained execution history records the local route rather than
+inventing canonical intermediate evaluations.
+
+The library supplies Transform::identity(), inverse(), compose(first),
+operations(), reframe(local,from), add_reference() and multiply_reference().
+second.compose(first) means second * first. Serialized frames retain their
+validated matrices; local-operation caches are rebuilt, not trusted on load.
+No new arithmetic opcode or reserved language name is introduced for these APIs.
+
+State::rescale_pow2(k) explicitly changes raw scale. In contrast,
+optimize::balanced_frame_with(state, Balance::PowerOfTwo) changes only a
+computational frame. It uses exact integer/rational comparisons.
+
+optimize::scale::progressive(samples,options) is a numerical library probe, not
+a source primitive. Options specify layer count, held-out suffix and absolute/
+relative tolerances. Reports retain attempts, inferred limit/amplitudes/ratios/
+signs/exponents, predictions, held-out errors, residual subtraction stages and
+unexplained residual. selected is absent unless a fit validates; best can still
+identify an unvalidated improving fit. Tolerance passes when either the
+absolute error or the relative error meets its respective bound.
+Layers are jointly refitted using only training samples; the suffix is used
+for model selection, not fitting or independent confirmation. See THEORY.
+
+PHASE and arithmetic INDEX remain absent. Observation index is metadata.
+No Fourier, Laplace, zeta or prime builtin is introduced.
+
+## Execution limits
 
 Source: 128 KB. Expression nesting and function-call depth: 128.
 Evaluation: 1,000,000 machine steps. A lazy index may be larger than this;

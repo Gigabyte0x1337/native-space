@@ -59,7 +59,7 @@ jobs:
       - name: Verify formatting
         run: cargo fmt --manifest-path language/runtime/Cargo.toml --check
 
-      - name: Run the complete test suite
+      - name: Run complete suite including deterministic algebra and frame properties
         run: cargo test --manifest-path language/runtime/Cargo.toml --locked
 
       - name: Run strict lint checks

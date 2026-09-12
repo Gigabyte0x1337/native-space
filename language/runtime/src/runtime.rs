@@ -576,6 +576,31 @@ fn builtin(name: &str, v: Vec<Value>) -> Result<Value, String> {
             )))
         }
         "add" | "multiply" => {
+            if let Some(Value::Framed { frame, .. }) =
+                v.iter().find(|x| matches!(x, Value::Framed { .. }))
+            {
+                let inputs = v
+                    .iter()
+                    .map(|x| local_scalar(x, frame))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut state = frame.encode(&if name == "add" {
+                    State::zero()
+                } else {
+                    State::one()
+                });
+                let operations = frame.operations();
+                for input in &inputs {
+                    state = if name == "add" {
+                        operations.add(&state, input.state())
+                    } else {
+                        operations.multiply(&state, input.state())
+                    };
+                }
+                return Ok(Value::Framed {
+                    local: Scalar::result(state, name, inputs),
+                    frame: frame.clone(),
+                });
+            }
             let mut state = if name == "add" {
                 State::zero()
             } else {
@@ -590,19 +615,21 @@ fn builtin(name: &str, v: Vec<Value>) -> Result<Value, String> {
                 };
             }
             let out = Scalar::result(state, name, inputs);
-            // Binary/unary arithmetic preserves the first explicit computational frame.
-            if let Some(Value::Framed { frame, .. }) =
-                v.iter().find(|x| matches!(x, Value::Framed { .. }))
-            {
-                return Ok(Value::Framed {
-                    local: Scalar::result(frame.encode(out.state()), "encode", vec![out]),
-                    frame: frame.clone(),
-                });
-            }
             Ok(Value::State(out))
         }
         "negate" | "inverse" => {
             expect_len(&v, 1)?;
+            if let Value::Framed { local, frame } = &v[0] {
+                let state = if name == "negate" {
+                    frame.operations().negate(local.state())
+                } else {
+                    frame.inverse_state(local.state())?
+                };
+                return Ok(Value::Framed {
+                    local: Scalar::result(state, name, vec![local.clone()]),
+                    frame: frame.clone(),
+                });
+            }
             let p = s(0)?;
             let q = if name == "negate" {
                 p.state().negate()
@@ -618,6 +645,16 @@ fn builtin(name: &str, v: Vec<Value>) -> Result<Value, String> {
                 Value::Text(t) if t == "multiply" => Split::Multiply,
                 _ => return Err("split route is \"add\" or \"multiply\"".into()),
             };
+            if let Value::Framed { local, frame } = &v[0] {
+                return Ok(Value::Framed {
+                    local: Scalar::result(
+                        frame.operations().split(local.state(), route),
+                        "split",
+                        vec![local.clone()],
+                    ),
+                    frame: frame.clone(),
+                });
+            }
             let p = s(0)?;
             in_frame(Scalar::result(p.state().split(route), "split", vec![p]), &v)
         }
@@ -689,6 +726,26 @@ fn builtin(name: &str, v: Vec<Value>) -> Result<Value, String> {
             Ok(Value::Observation(p.observe(k)))
         }
         _ => Err(format!("invalid call to {name}")),
+    }
+}
+// Converting between local bases is explicit. No operand is mistaken for a
+// canonical triple, and same-frame inputs retain their existing history nodes.
+fn local_scalar(value: &Value, target: &Transform) -> Result<Scalar, String> {
+    match value {
+        Value::Framed { local, frame } if frame == target => Ok(local.clone()),
+        Value::Framed { local, frame } => Ok(Scalar::result(
+            target.reframe(local.state(), frame),
+            "reframe",
+            vec![local.clone()],
+        )),
+        _ => {
+            let scalar = value.scalar()?;
+            Ok(Scalar::result(
+                target.encode(scalar.state()),
+                "encode",
+                vec![scalar],
+            ))
+        }
     }
 }
 fn matches(
